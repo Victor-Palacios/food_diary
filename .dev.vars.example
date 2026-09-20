@@ -1,0 +1,12 @@
+# Copy to .dev.vars for local `wrangler dev`. .dev.vars is gitignored and must
+# stay that way -- it holds real secrets.
+#
+# In production these are set with `wrangler secret put NAME`, which encrypts
+# them at rest and injects them as environment bindings. They are never
+# readable back from the dashboard and never reach the browser: the Worker
+# calls NVIDIA server-side and returns only the extracted values.
+#
+# Leaving this unset is a supported configuration. Phase 2 is optional -- the
+# app hides the photo buttons and Phase 1 works exactly as before.
+
+NVIDIA_API_KEY=nvapi-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx

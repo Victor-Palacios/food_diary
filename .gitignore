@@ -1,0 +1,21 @@
+node_modules/
+dist/
+dev-dist/
+
+# Wrangler state and local secret overrides.
+.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
+# Vite env files. Only .env.example is committed, and it holds placeholders.
+.env
+.env.*
+!.env.example
+
+*.local
+*.log
+npm-debug.log*
+.DS_Store
+.idea/
+.vscode/

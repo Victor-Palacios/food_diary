@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "food-log",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // One Worker serves both the SPA and the API. Static assets in ./dist are
+  // matched first; `run_worker_first` carves out /api/* so those requests
+  // reach the script instead of 404ing against the asset manifest, and
+  // `single-page-application` sends every other unmatched path to index.html
+  // so client-side routes survive a hard refresh.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  "observability": {
+    "enabled": true
+  },
+
+  // Non-secret Worker config. The NVIDIA API key is NOT here -- it is a secret
+  // binding set with `wrangler secret put NVIDIA_API_KEY` (see README).
+  "vars": {
+    "NVIDIA_BASE_URL": "https://integrate.api.nvidia.com/v1",
+    "NVIDIA_MODEL": "meta/llama-3.2-90b-vision-instruct"
+  }
+}
