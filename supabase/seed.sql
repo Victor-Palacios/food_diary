@@ -1,33 +1,46 @@
--- Food Log -- seed data.
+-- Food Log -- seed data. OPTIONAL.
 --
--- Run this ONCE, after creating the single user account (see README ->
--- "Supabase setup"). It attaches the opening target block to that account.
+-- This only inserts the opening target block (2300 kcal ceiling, 140 g
+-- protein, 300 g carbs, 70 g fat, 15 g fiber, effective today). You can skip
+-- this file entirely and set the same thing in the app: Settings -> Target
+-- history -> New, where those exact numbers are already prefilled.
 --
--- EDIT THIS LINE, then run the whole file in the Supabase SQL editor
--- (or: psql "$DATABASE_URL" -f supabase/seed.sql).
+-- Nothing to edit. Paste the whole file into the Supabase SQL editor and run
+-- it AFTER creating your account (Authentication -> Users -> Add user).
+--
+-- The food library is deliberately not seeded -- add the foods of a typical
+-- week as you first eat them.
 
 do $$
 declare
-  owner_email constant text := 'you@example.com';  -- <-- edit me
   uid uuid;
+  n   int;
 begin
-  select id into uid from auth.users where email = owner_email;
+  -- This is a single-user app, so the one account in auth.users is the owner.
+  -- No email to fill in, and no way to seed the wrong account by mistake.
+  select count(*) into n from auth.users;
 
-  if uid is null then
+  if n = 0 then
     raise exception
-      'No auth.users row for %. Create the single account first, then re-run this file.',
-      owner_email;
+      'No account exists yet. Create one first: Authentication -> Users -> '
+      '"Add user" (tick Auto Confirm User), then re-run this file.';
   end if;
 
-  -- Opening targets for the current block (spec section 1). These move by
-  -- 100 kcal every DEXA cycle -- edit them in the app from then on, never
-  -- here, so each change lands as its own effective-dated row.
+  if n > 1 then
+    raise exception
+      'Found % accounts, expected exactly one. This app is single-user; '
+      'delete the extras, or insert the target row by hand for the account '
+      'you want.', n;
+  end if;
+
+  select id into uid from auth.users;
+
   insert into public.targets
     (owner_id, effective_from, calories_max, protein_g, carbs_g, fat_total_g, fiber_g)
   values
     (uid, current_date, 2300, 140, 300, 70, 15)
   on conflict (owner_id, effective_from) do nothing;
 
-  raise notice 'Seeded targets for % (%).', owner_email, uid;
+  raise notice 'Opening target seeded for account %.', uid;
 end;
 $$;

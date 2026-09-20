@@ -93,33 +93,54 @@ one event a year and another surface to get wrong.
 
 ## Supabase setup
 
-1. Create a Supabase project. Note the project URL and the **anon** key from
-   Settings → API.
+No CLI needed — all of this can be done in the browser at
+[supabase.com/dashboard](https://supabase.com/dashboard).
 
-2. Run the migration. Either paste `supabase/migrations/0001_init.sql` into the
-   dashboard SQL editor, or with the Supabase CLI:
+1. **Create the project.** New project → pick any name → set a database
+   password (this is the *database* password, not your login to the app; save
+   it in a password manager and otherwise forget it) → pick the region closest
+   to you. It takes a minute or two to provision.
+
+2. **Create the tables.** Left sidebar → **SQL Editor** → *New query*. Paste
+   the entire contents of `supabase/migrations/0001_init.sql` and press **Run**.
+   You should see "Success. No rows returned" — that is what success looks like
+   for DDL.
+
+   This creates `foods`, `log_entries`, `targets`, the `daily_totals` and
+   `food_usage` views, and enables RLS with owner-scoped policies on all three
+   tables.
+
+   With the CLI instead, if you prefer:
 
    ```sh
    supabase link --project-ref <your-project-ref>
    supabase db push
    ```
 
-   This creates `foods`, `log_entries`, `targets`, the `daily_totals` and
-   `food_usage` views, and enables RLS with owner-scoped policies on all three
-   tables.
+3. **Create your one account.** Authentication → **Users** → *Add user* →
+   *Create new user*. Enter the email and password you will actually sign in
+   to the app with, and **tick Auto Confirm User** — without it the account
+   stays unverified and cannot sign in.
 
-3. Seed the opening target. Edit the one email literal at the top of
-   `supabase/seed.sql`, then run it:
+4. **Close the door.** Authentication → **Sign In / Providers**: turn
+   **Allow new users to sign up** off, leave *Confirm email* on, and disable
+   every OAuth provider. The account from step 3 is now the only one that can
+   ever exist.
 
-   ```sh
-   psql "$DATABASE_URL" -f supabase/seed.sql
-   ```
+5. **Copy the two values the app needs.** Project Settings → **API Keys**:
+   the **Project URL** and the **anon / publishable** key. You will paste these
+   into Cloudflare later. Do *not* copy the `service_role` key — this project
+   never uses it.
 
-   It inserts the current block's targets (2300 kcal ceiling, 140 g protein,
-   300 g carbs, 70 g fat, 15 g fiber) effective today, and raises an error
-   rather than silently doing nothing if the account does not exist yet. Every
-   later change is made in the app, so each one lands as its own effective-dated
-   row.
+6. **Set the opening target.** **Either** do it in the app once it is running —
+   Settings → Target history → **New**, where 2300 / 140 / 300 / 70 / 15 are
+   already prefilled — **or** paste `supabase/seed.sql` into the SQL editor and
+   run it. There is nothing to edit in that file; it finds the single account
+   itself and errors out rather than guessing if there is not exactly one.
+
+   Either way it lands as one effective-dated row. Every later change is made
+   in the app, so each one becomes its own row and old blocks keep their
+   original target.
 
 The food library is intentionally not seeded. Add the twenty foods of a typical
 week as you first eat them.
