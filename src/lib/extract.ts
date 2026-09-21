@@ -29,28 +29,63 @@ export interface ExtractResult {
 export class ExtractUnavailable extends Error {}
 
 /**
+ * NVIDIA's OpenAI-compatible vision endpoints only accept an inline base64
+ * image below roughly 180 KB; past that they expect a separate asset upload.
+ * Going over does not fail cleanly -- the request can simply hang until
+ * Cloudflare's edge gives up and returns a bare 524.
+ *
+ * So aim comfortably under, with headroom for the JSON envelope.
+ */
+const BASE64_BUDGET = 150_000
+
+/** Progressively smaller and lossier, stopping at the first size that fits. */
+const ATTEMPTS: Array<{ maxEdge: number; quality: number }> = [
+  { maxEdge: 1024, quality: 0.8 },
+  { maxEdge: 1024, quality: 0.6 },
+  { maxEdge: 800, quality: 0.6 },
+  { maxEdge: 640, quality: 0.5 },
+  { maxEdge: 512, quality: 0.4 },
+]
+
+/**
  * Phone cameras produce 4-12 MB images. Downscaling before upload keeps the
  * request inside the model's payload limit and makes the round trip usable on
- * a phone connection; 1280px is still far more than enough to read a
- * nutrition panel.
+ * a phone connection; 1024px is still more than enough to read a nutrition
+ * panel.
  */
-export async function compressImage(file: File, maxEdge = 1280): Promise<string> {
+export async function compressImage(file: File): Promise<string> {
   const bitmap = await createImageBitmap(file)
-  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height))
-  const width = Math.max(1, Math.round(bitmap.width * scale))
-  const height = Math.max(1, Math.round(bitmap.height * scale))
 
   const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-
   const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('Could not read the image on this device.')
-  ctx.drawImage(bitmap, 0, 0, width, height)
-  bitmap.close()
+  if (!ctx) {
+    bitmap.close()
+    throw new Error('Could not read the image on this device.')
+  }
 
-  // Strips EXIF along the way, which is fine -- nothing downstream wants it.
-  return canvas.toDataURL('image/jpeg', 0.85)
+  let smallest = ''
+
+  try {
+    for (const { maxEdge, quality } of ATTEMPTS) {
+      const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height))
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+      // Re-encoding as JPEG strips EXIF too, which nothing downstream wants.
+      smallest = canvas.toDataURL('image/jpeg', quality)
+
+      const payload = smallest.length - (smallest.indexOf(',') + 1)
+      if (payload <= BASE64_BUDGET) return smallest
+    }
+  } finally {
+    bitmap.close()
+  }
+
+  // Even the smallest attempt is over budget (a very wide panorama, say).
+  // Send it anyway rather than refusing -- the Worker checks the limit too
+  // and will say so plainly.
+  return smallest
 }
 
 export async function extractFromPhoto(

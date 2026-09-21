@@ -21,8 +21,27 @@ import { json, type Env } from './shared'
  * the log from here -- this Worker has no database credentials at all.
  */
 
-const MAX_IMAGE_BYTES = 6 * 1024 * 1024
+/**
+ * NVIDIA's vision endpoints take an inline base64 image only up to about
+ * 180 KB. Over that the call does not fail cleanly -- it can hang until
+ * Cloudflare's edge times out the whole request with a bare 524 -- so reject
+ * it here with something the user can act on. The client compresses to fit,
+ * and this is the backstop for when it cannot.
+ */
+const MAX_IMAGE_B64_BYTES = 180_000
 const MAX_TEXT_CHARS = 600
+
+/**
+ * NVIDIA withdraws hosted models, and a withdrawn id answers 404/410 forever.
+ * The live catalog is public and needs no key:
+ *
+ *   curl https://integrate.api.nvidia.com/v1/models
+ *
+ * Both of these are overridable by the vars of the same name in
+ * wrangler.jsonc, so swapping a model is a config change, not a code change.
+ */
+const DEFAULT_VISION_MODEL = 'meta/llama-3.2-90b-vision-instruct'
+const DEFAULT_TEXT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct'
 
 const LABEL_PROMPT = `You are reading a printed nutrition facts panel from a photograph.
 
@@ -189,8 +208,17 @@ export async function handleExtract(
     if (!image.startsWith('data:image/')) {
       return json({ error: 'image must be a data: URL.' }, 400)
     }
-    if (image.length > MAX_IMAGE_BYTES) {
-      return json({ error: 'That photo is too large. Try again with less zoom.' }, 413)
+
+    const payloadBytes = image.length - (image.indexOf(',') + 1)
+    if (payloadBytes > MAX_IMAGE_B64_BYTES) {
+      return json(
+        {
+          error:
+            'That photo is too large for the model even after compression. ' +
+            'Crop to just the label and try again.',
+        },
+        413,
+      )
     }
   }
 
@@ -211,19 +239,74 @@ export async function handleExtract(
         ]
 
   const baseUrl = env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1'
+  const visionModel = env.NVIDIA_MODEL || DEFAULT_VISION_MODEL
 
   // A text description does not need a vision model. Routing it to a
   // text-only model is cheaper and follows the transcribe-vs-estimate
   // instructions more reliably than the vision variant does.
-  const model =
-    kind === 'text'
-      ? env.NVIDIA_TEXT_MODEL || 'meta/llama-3.3-70b-instruct'
-      : env.NVIDIA_MODEL || 'meta/llama-3.2-90b-vision-instruct'
+  const model = kind === 'text' ? env.NVIDIA_TEXT_MODEL || DEFAULT_TEXT_MODEL : visionModel
+
+  // Cloudflare's edge abandons the request at ~100s and hands the browser a
+  // bare 524 with nothing useful in it. Give up first, so the user gets a
+  // real message and a suggestion instead. Vision calls get longer because a
+  // cold vision NIM genuinely can take most of a minute.
+  const timeoutMs = kind === 'text' ? 40_000 : 70_000
+
+  let result = await callModel(env, baseUrl, model, messageContent, timeoutMs, kind)
+
+  // NVIDIA retires hosted models, and a retired id answers 404/410 forever.
+  // Rather than leave the feature dead until someone notices, fall back to
+  // the vision model, which handles plain text perfectly well. Costs a little
+  // more per call; beats being broken.
+  if (result.retired && kind === 'text' && model !== visionModel) {
+    console.error(
+      `NVIDIA_TEXT_MODEL "${model}" is retired (${result.status}); ` +
+        `falling back to "${visionModel}". Update the var to silence this.`,
+    )
+    result = await callModel(env, baseUrl, visionModel, messageContent, timeoutMs, kind)
+  }
+
+  if (result.error) return result.error
+
+  const parsed = parseJsonObject(result.content ?? '')
+  if (!parsed) {
+    return json(
+      {
+        error:
+          kind === 'text'
+            ? 'Could not read a result from that description. Enter it by hand.'
+            : 'Could not read a result from that photo. Enter it by hand.',
+      },
+      422,
+    )
+  }
+
+  return json(parsed)
+}
+
+interface CallResult {
+  content?: string
+  /** Set when the model id itself is gone, so the caller can try another. */
+  retired?: boolean
+  status?: number
+  error?: Response
+}
+
+async function callModel(
+  env: Env,
+  baseUrl: string,
+  model: string,
+  messageContent: Array<Record<string, unknown>>,
+  timeoutMs: number,
+  kind: string,
+): Promise<CallResult> {
+  const startedAt = Date.now()
 
   let upstream: Response
   try {
     upstream = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
+      signal: AbortSignal.timeout(timeoutMs),
       headers: {
         authorization: `Bearer ${env.NVIDIA_API_KEY}`,
         'content-type': 'application/json',
@@ -241,21 +324,73 @@ export async function handleExtract(
       }),
     })
   } catch (e) {
-    return json(
-      { error: `Could not reach the extraction service: ${errorText(e)}` },
-      502,
-    )
+    const elapsed = Date.now() - startedAt
+    const timedOut =
+      e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')
+
+    console.error(`NVIDIA ${kind} via ${model} failed after ${elapsed}ms: ${errorText(e)}`)
+
+    if (timedOut) {
+      return {
+        error: json(
+          {
+            error:
+              `The model did not answer within ${Math.round(timeoutMs / 1000)}s. ` +
+              `It may be busy — try again, or type the numbers in by hand.`,
+          },
+          504,
+        ),
+      }
+    }
+    return {
+      error: json(
+        { error: `Could not reach the extraction service: ${errorText(e)}` },
+        502,
+      ),
+    }
   }
 
+  console.log(
+    `NVIDIA ${kind} via ${model}: ${upstream.status} in ${Date.now() - startedAt}ms`,
+  )
+
   if (!upstream.ok) {
-    const detail = (await upstream.text().catch(() => '')).slice(0, 400)
-    // The upstream body can echo request details, so it is logged rather than
-    // returned verbatim; the client gets the status only.
-    console.error(`NVIDIA API ${upstream.status}: ${detail}`)
-    return json(
-      { error: `The extraction service returned ${upstream.status}.` },
-      upstream.status === 429 ? 429 : 502,
-    )
+    const detail = (await upstream.text().catch(() => '')).slice(0, 300)
+    console.error(`NVIDIA ${upstream.status} for "${model}": ${detail}`)
+
+    // 404/410 mean the id is wrong or withdrawn -- a configuration problem,
+    // not a transient one, so name it instead of saying "try again".
+    if (upstream.status === 404 || upstream.status === 410) {
+      return {
+        retired: true,
+        status: upstream.status,
+        error: json(
+          {
+            error:
+              `The model "${model}" is no longer available (${upstream.status}). ` +
+              `Point NVIDIA_${kind === 'text' ? 'TEXT_' : ''}MODEL at a current one ` +
+              `from https://integrate.api.nvidia.com/v1/models`,
+          },
+          502,
+        ),
+      }
+    }
+
+    if (upstream.status === 401 || upstream.status === 403) {
+      return {
+        error: json(
+          { error: 'The NVIDIA API key was rejected. Check or rotate NVIDIA_API_KEY.' },
+          502,
+        ),
+      }
+    }
+
+    return {
+      error: json(
+        { error: `The extraction service returned ${upstream.status}.` },
+        upstream.status === 429 ? 429 : 502,
+      ),
+    }
   }
 
   const payload = (await upstream.json().catch(() => null)) as {
@@ -264,18 +399,12 @@ export async function handleExtract(
 
   const content = payload?.choices?.[0]?.message?.content
   if (typeof content !== 'string' || !content.trim()) {
-    return json({ error: 'The extraction service returned nothing usable.' }, 502)
+    return {
+      error: json({ error: 'The extraction service returned nothing usable.' }, 502),
+    }
   }
 
-  const parsed = parseJsonObject(content)
-  if (!parsed) {
-    return json(
-      { error: 'Could not read a result from that photo. Enter it by hand.' },
-      422,
-    )
-  }
-
-  return json(parsed)
+  return { content }
 }
 
 /**

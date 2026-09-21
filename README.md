@@ -361,6 +361,36 @@ cheaper, and better at following the transcribe-versus-estimate rule, which is
 the part that has to be right. Both model ids are non-secret `vars` in
 `wrangler.jsonc` and can be changed without a code change.
 
+### When a model is withdrawn
+
+NVIDIA retires hosted models, and a retired id answers **410 Gone** forever.
+The live catalog is public and needs no key:
+
+```sh
+curl https://integrate.api.nvidia.com/v1/models
+```
+
+Two things keep that from breaking the feature:
+
+- On a 404/410 for the text model, the Worker **falls back to the vision
+  model**, which handles plain text fine. Slightly dearer per call, but the
+  feature keeps working. The swap is logged.
+- If nothing works, the error names the dead model and the variable to
+  change, rather than saying "try again".
+
+### Timeouts
+
+The upstream call is bounded — 40s for text, 70s for vision. Without that,
+Cloudflare's edge abandons the request at ~100s and the browser gets a bare
+**524** with nothing actionable in it. The Worker now gives up first and
+returns a real message.
+
+Photos are compressed client-side to keep the base64 payload under ~150 KB,
+stepping down through size and quality until it fits. NVIDIA's vision
+endpoints accept an inline image only up to about 180 KB, and going over does
+not fail cleanly — the request can simply hang. The Worker rejects anything
+over the limit with a clear message as a backstop.
+
 All three are **review-before-save**: the model prefills a form, the user
 confirms every value. Nothing is ever written to the log directly — the Worker
 has no database access to do it with even if it wanted to.

@@ -30,6 +30,12 @@
     // Text-only model: parses or estimates a written description. Cheaper
     // than the vision model and better at following the transcribe-vs-
     // estimate rules, which is the part that has to be right.
-    "NVIDIA_TEXT_MODEL": "meta/llama-3.3-70b-instruct"
+    //
+    // NVIDIA withdraws hosted models; a withdrawn id answers 410 forever.
+    // The live catalog is public and needs no key:
+    //   curl https://integrate.api.nvidia.com/v1/models
+    // If this one goes, the Worker falls back to the vision model and logs
+    // the swap, so the feature keeps working until this line is updated.
+    "NVIDIA_TEXT_MODEL": "nvidia/llama-3.1-nemotron-70b-instruct"
   }
 }
