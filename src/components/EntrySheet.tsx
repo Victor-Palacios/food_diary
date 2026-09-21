@@ -49,7 +49,10 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
   const [oneOffName, setOneOffName] = useState('')
   const [oneOffDraft, setOneOffDraft] = useState<NutritionDraft>(EMPTY_NUTRITION_DRAFT)
   const [oneOffServing, setOneOffServing] = useState('1 serving')
-  const [alsoSave, setAlsoSave] = useState(false)
+  // Saving to the library is the default: the library is what kills the
+  // re-typing friction, and a food typed once and never reused costs only a
+  // row. Opting out is the rare case, so it is the box you tick.
+  const [skipLibrary, setSkipLibrary] = useState(false)
   const [oneOffEstimate, setOneOffEstimate] = useState(false)
   // Tracked separately from the estimate flag so provenance stays honest:
   // 'photo' only when a camera was actually involved.
@@ -140,7 +143,7 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
     void run(async () => {
       let foodId: string | null = null
 
-      if (alsoSave) {
+      if (!skipLibrary) {
         const food = await api.createFood({
           name,
           brand: null,
@@ -339,7 +342,7 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
   if (mode === 'oneoff') {
     return (
       <Sheet
-        title="One-off entry"
+        title="Something new"
         onClose={onClose}
         lead={
           editing ? undefined : (
@@ -424,10 +427,10 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
         <label className="checkbox">
           <input
             type="checkbox"
-            checked={alsoSave}
-            onChange={(e) => setAlsoSave(e.target.checked)}
+            checked={skipLibrary}
+            onChange={(e) => setSkipLibrary(e.target.checked)}
           />
-          Also save to the library
+          Don’t save to the library
         </label>
 
         <DateAndNote
