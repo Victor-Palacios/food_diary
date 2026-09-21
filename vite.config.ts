@@ -1,8 +1,35 @@
+import { execSync } from 'node:child_process'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+/**
+ * A visible build stamp, shown in Settings.
+ *
+ * An installed PWA can keep running old JavaScript long after a deploy, and
+ * "which version am I actually looking at" is otherwise unanswerable from a
+ * phone -- which turns every bug report into guesswork.
+ */
+function buildStamp(): string {
+  const sha =
+    process.env.WORKERS_CI_COMMIT_SHA ??
+    process.env.CF_PAGES_COMMIT_SHA ??
+    (() => {
+      try {
+        return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+          .toString()
+          .trim()
+      } catch {
+        return 'dev'
+      }
+    })()
+  return `${sha.slice(0, 7)} · ${new Date().toISOString().slice(0, 16).replace('T', ' ')}Z`
+}
+
 export default defineConfig({
+  define: {
+    __BUILD_STAMP__: JSON.stringify(buildStamp()),
+  },
   plugins: [
     react(),
     VitePWA({
@@ -31,6 +58,13 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
+        // Take over as soon as a new build is fetched rather than waiting for
+        // every tab to close. An installed PWA is rarely "closed", so without
+        // these a deploy can sit unused for days -- and a client running
+        // against a newer API is how silent breakage happens.
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         // The app shell is cached so a cold open on a bad connection still
         // paints instantly. Supabase and the extraction endpoint are never
         // cached -- stale nutrition data is worse than no data.

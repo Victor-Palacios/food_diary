@@ -114,6 +114,11 @@ export function SettingsPage() {
           <br />
           Entries keep a snapshot of a food's macros as they were when logged, so
           correcting a food later never rewrites past days.
+          <br />
+          {/* An installed PWA can run old code long after a deploy. Showing
+              the build makes "which version is this" answerable from the
+              phone instead of guessed at. */}
+          Build <code>{__BUILD_STAMP__}</code>
         </div>
       </div>
 
