@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ExtractUnavailable, extractFromText, type ExtractResult } from '../lib/extract'
 import { useElapsedSeconds, useExtractionAvailable } from '../lib/useExtraction'
+import { playChime } from '../lib/chime'
 
 interface Props {
   onResult: (result: ExtractResult) => void
@@ -48,10 +49,14 @@ export function TextEstimate({ onResult }: Props) {
     setWasEstimated(null)
     try {
       const result = await extractFromText(description)
-      onResult(result)
+      // If the model gave no name, the description is the best label there
+      // is -- the user wrote it, so it says what they meant.
+      onResult({ ...result, name: result.name?.trim() || description })
       setNotes(result.notes?.trim() || null)
       setWasEstimated(result.estimated !== false)
+      playChime('done')
     } catch (e) {
+      playChime('failed')
       setError(
         e instanceof ExtractUnavailable
           ? e.message

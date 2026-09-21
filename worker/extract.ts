@@ -147,7 +147,7 @@ total for the whole meal.
 
 Return ONLY a JSON object, no prose, no markdown fence:
 {
-  "name": "short summary of the meal, e.g. \\"2 eggs, toast with butter, banana\\"",
+  "name": "what the food is called",
   "serving_label": "the portion, e.g. \\"1 meal as described\\"",
   "estimated": true or false,
   "nutrition": {
@@ -166,6 +166,8 @@ Rules:
 - Numbers only, no units, no ranges. Strip "g", "mg", "kcal", "cal".
 - carbs_g is TOTAL carbohydrate, not net carbs.
 - Where the description gives a quantity or a brand, respect it exactly.
+- If the description names the dish, use that name as written. Do not
+  shorten it, paraphrase it, or replace it with a generic description.
 - In CASE B, if a named restaurant dish has published nutrition data, use it
   and say so in notes -- but this is still an estimate, so "estimated": true.
 - The user reviews and corrects every value before it is saved.`
@@ -272,9 +274,62 @@ export async function handleExtract(
   // Everything above this point fails fast and gets an ordinary status code.
   // From here the model call can take minutes, so the reply is streamed --
   // see streamWhileWorking for why.
-  return streamWhileWorking(() =>
-    runExtraction(env, baseUrl, model, visionModel, messageContent, kind),
-  )
+  const work = () =>
+    runExtraction(env, baseUrl, model, visionModel, messageContent, kind).then((final) =>
+      kind === 'text' && final.ok
+        ? { ...final, result: applyStatedValues(final.result, description) }
+        : final,
+    )
+
+  // Only stream to a client that asked for it. One cached from before
+  // streaming existed would parse newline-delimited output as JSON, fail,
+  // and silently show an empty form; it gets a buffered reply instead. That
+  // reply is still subject to the edge's ~100s limit, which is the cost of
+  // running old code, but it is correct rather than quietly wrong.
+  if (!(request.headers.get('accept') ?? '').includes('ndjson')) {
+    const final = await work()
+    return final.ok
+      ? json(final.result)
+      : json({ error: final.error, detail: final.detail }, 502)
+  }
+
+  return streamWhileWorking(work)
+}
+
+/**
+ * Overwrites the model's numbers with any the user stated outright, and
+ * settles the estimate flag from the text rather than the model's opinion.
+ *
+ * A figure the user typed is ground truth. The model's job on that input is
+ * transcription, and transcription is something we can simply do ourselves,
+ * so a misread digit or an unhelpfully rounded one cannot reach the log.
+ */
+function applyStatedValues(
+  result: Record<string, unknown>,
+  description: string,
+): Record<string, unknown> {
+  const stated = readStatedValues(description)
+  const keys = Object.keys(stated) as Array<keyof StatedValues>
+  if (keys.length === 0) return result
+
+  const nutrition = { ...((result.nutrition ?? {}) as Record<string, unknown>) }
+  for (const key of keys) nutrition[key] = stated[key]
+
+  const transcribed = isTranscription(stated)
+  if (transcribed && result.estimated !== false) {
+    console.log(
+      `Overriding estimated=${String(result.estimated)} -> false: ` +
+        `the description states ${keys.join(', ')}.`,
+    )
+  }
+
+  return {
+    ...result,
+    nutrition,
+    // Only ever downgrade to "not an estimate" on evidence. If the figures
+    // are absent the model's own judgement stands.
+    estimated: transcribed ? false : result.estimated,
+  }
 }
 
 /** The single line the client ultimately reads off the stream. */
@@ -589,6 +644,78 @@ function extractObject(candidate: string): Record<string, unknown> | null {
   }
 
   return null
+}
+
+/**
+ * Pulls nutrition figures the user stated outright from their own text.
+ *
+ * Whether a description was transcribed or estimated is far too important to
+ * leave to the model's self-report: it decides `is_estimate`, and a wrongly
+ * flagged entry is real data that looks like a guess. Models were observed
+ * marking "630 cal, 45g protein, ..." as an estimate, so the question is
+ * settled here instead, from the text the user actually typed.
+ *
+ * Handles both orders people write in -- "47g protein" and "Protein: 47g".
+ */
+const METRIC_WORDS: Array<[keyof StatedValues, string]> = [
+  // Longest and most specific first: "saturated fat" must not be read as
+  // plain "fat", and "total fat" must not be read as "sat fat".
+  ['fat_sat_g', 'saturated fat|sat\\.? ?fat'],
+  ['fat_trans_g', 'trans ?fat'],
+  ['fiber_g', 'fibre|fiber'],
+  ['protein_g', 'protein'],
+  ['carbs_g', 'carbohydrates?|carbs?'],
+  ['fat_total_g', 'total fat|fat'],
+  ['calories', 'calories|kcals?|cals?'],
+]
+
+export interface StatedValues {
+  calories?: number
+  protein_g?: number
+  carbs_g?: number
+  fat_total_g?: number
+  fat_sat_g?: number
+  fat_trans_g?: number
+  fiber_g?: number
+}
+
+export function readStatedValues(text: string): StatedValues {
+  const found: StatedValues = {}
+  let remaining = ` ${text} `
+
+  for (const [key, words] of METRIC_WORDS) {
+    // "47 g protein" / "47g of protein"
+    const before = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:g|grams?|kcals?|cals?)?\\s*(?:of\\s+)?(?:${words})\\b`, 'i')
+    // "protein: 47g" / "protein 47 g"
+    const after = new RegExp(`\\b(?:${words})\\b\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)`, 'i')
+
+    const m = before.exec(remaining) ?? after.exec(remaining)
+    if (!m) continue
+
+    const value = Number(m[1])
+    if (!Number.isFinite(value) || value < 0) continue
+
+    found[key] = value
+    // Consume the match so "fat" cannot later re-match inside "saturated fat".
+    remaining = remaining.replace(m[0], ' '.repeat(m[0].length))
+  }
+
+  return found
+}
+
+/**
+ * True when the user supplied the figures that matter, so the entry is a
+ * transcription rather than a guess. Saturated and trans fat are excluded:
+ * labels routinely omit them and their absence should not demote an
+ * otherwise exact entry to an estimate.
+ */
+export function isTranscription(stated: StatedValues): boolean {
+  return (
+    stated.calories !== undefined &&
+    stated.protein_g !== undefined &&
+    stated.carbs_g !== undefined &&
+    stated.fat_total_g !== undefined
+  )
 }
 
 function tryParse(source: string): Record<string, unknown> | null {

@@ -108,7 +108,14 @@ export async function extractFromText(text: string): Promise<ExtractResult> {
 async function post(request: Record<string, unknown>): Promise<ExtractResult> {
   const response = await fetch('/api/extract', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      // Opt in to the streamed reply. A client cached from before streaming
+      // existed does not send this and gets a buffered response instead, so
+      // an installed PWA running yesterday's JavaScript keeps working rather
+      // than silently parsing the stream into nothing.
+      accept: 'application/x-ndjson',
+    },
     body: JSON.stringify(request),
   })
 
@@ -122,15 +129,31 @@ async function post(request: Record<string, unknown>): Promise<ExtractResult> {
   // call takes too long for that, so it streams instead -- see below.
   const streamed = (response.headers.get('content-type') ?? '').includes('ndjson')
   if (!streamed) {
-    const payload: unknown = await response.json().catch(() => null)
+    const text = await response.text()
+    let payload: unknown = null
+    try {
+      payload = JSON.parse(text)
+    } catch {
+      // Falling through with null here is what produced a silent all-zero
+      // form once: an unreadable body with a 200 status normalised into
+      // nothing at all. An unreadable reply is a failure, not an empty one.
+      throw new Error(
+        `The server sent a reply this app could not read. ` +
+          `Close and reopen the app to pick up the latest version.` +
+          (text ? `\n\nIt said: ${text.slice(0, 200)}` : ''),
+      )
+    }
     if (!response.ok) throw new Error(errorFrom(payload, response.status))
     return normalize(payload)
   }
 
   const final = await readFinalLine(response)
-  if (!final || final.ok !== true) {
-    throw new Error(errorFrom(final, response.status))
+  if (!final) {
+    throw new Error(
+      'The connection closed before a result arrived. Try again.',
+    )
   }
+  if (final.ok !== true) throw new Error(errorFrom(final, response.status))
   return normalize(final.result)
 }
 
@@ -219,8 +242,19 @@ function normalize(payload: unknown): ExtractResult {
     fiber_g: num(n.fiber_g),
   }
 
+  // A reply with no name and nothing but zeros is not a result, it is a
+  // misunderstanding dressed as one. Saying so beats handing back a blank
+  // form that looks like the model simply had no opinion.
+  const name = typeof obj.name === 'string' ? obj.name : ''
+  const everythingZero = Object.values(nutrition).every((v) => v === 0)
+  if (!name.trim() && everythingZero) {
+    throw new Error(
+      'The model returned nothing usable for that. Try rewording it, or enter the values by hand.',
+    )
+  }
+
   return {
-    name: typeof obj.name === 'string' ? obj.name : '',
+    name,
     serving_label:
       typeof obj.serving_label === 'string' && obj.serving_label.trim()
         ? obj.serving_label

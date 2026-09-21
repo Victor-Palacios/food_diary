@@ -348,10 +348,21 @@ Three separate features, not one "upload a picture" flow:
 
   That distinction matters: ~80% of intake comes from labels or published
   restaurant data, and filing those exact figures as guesses would make real
-  data excludable from analysis later. The model returns an explicit
-  `estimated` flag; anything other than a literal `false` is treated as an
-  estimate, because over-flagging is recoverable and under-flagging quietly
-  corrupts the audit trail.
+  data excludable from analysis later.
+
+  **It is not left to the model to decide.** Models were observed reporting
+  an exact list of macros as an estimate, and rounding the figures while they
+  were at it. So the Worker reads the numbers out of the description itself
+  (`readStatedValues`), overwrites the model's values with any the user
+  stated, and sets `is_estimate = false` when calories, protein, carbs and
+  fat were all given. Saturated and trans fat are excluded from that test,
+  since labels routinely omit them and their absence should not demote an
+  otherwise exact entry. Where the user stated nothing, the model's own
+  `estimated` flag stands, and anything other than a literal `false` counts
+  as an estimate.
+
+  A figure the user typed is ground truth, so transcribing it is something
+  the app can simply do itself rather than hope for.
 
   `source = 'photo'` is reserved for results that actually came from a camera,
   so provenance stays honest.

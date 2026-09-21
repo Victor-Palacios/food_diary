@@ -4,6 +4,7 @@ import { IconPlus } from '../components/Icons'
 import * as api from '../lib/api'
 import { useAppData } from '../lib/AppData'
 import { supabase } from '../lib/supabase'
+import { chimeEnabled, playChime, setChimeEnabled } from '../lib/chime'
 import { TIMEZONE } from '../lib/config'
 import { formatCalories, formatGrams, parseNumber } from '../lib/format'
 import { formatShort, today, type IsoDate } from '../lib/dates'
@@ -19,6 +20,7 @@ export function SettingsPage() {
   const { targets, refresh } = useAppData()
   const [editing, setEditing] = useState<Target | null>(null)
   const [creating, setCreating] = useState(false)
+  const [chime, setChime] = useState(chimeEnabled)
 
   const current = api.activeTarget(targets, today())
 
@@ -83,6 +85,26 @@ export function SettingsPage() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="card">
+        <h2>Sound</h2>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={chime}
+            onChange={(e) => {
+              setChime(e.target.checked)
+              setChimeEnabled(e.target.checked)
+              if (e.target.checked) playChime('done')
+            }}
+          />
+          Chime when an estimate finishes
+        </label>
+        <div className="sub">
+          A model call can take a minute, so this says when it is done without
+          you watching the screen. Remembered on this device.
+        </div>
       </div>
 
       <div className="card">

@@ -7,6 +7,7 @@ import {
   type ExtractResult,
 } from '../lib/extract'
 import { useElapsedSeconds, useExtractionAvailable } from '../lib/useExtraction'
+import { playChime } from '../lib/chime'
 
 interface Props {
   kind: Extract<ExtractKind, 'label' | 'plate'>
@@ -39,7 +40,9 @@ export function PhotoButton({ kind, onResult }: Props) {
       const result = await extractFromPhoto(kind, file)
       onResult(result)
       setNotes(result.notes?.trim() || null)
+      playChime('done')
     } catch (e) {
+      playChime('failed')
       setError(
         e instanceof ExtractUnavailable
           ? e.message

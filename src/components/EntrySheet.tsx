@@ -365,7 +365,7 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
             arithmetic, then correct whatever looks wrong. */}
         <TextEstimate
           onResult={(result) => {
-            if (result.name) setOneOffName(result.name)
+            setOneOffName(result.name)
             setOneOffDraft(draftFromNutrition(result.nutrition))
             setOneOffServing(result.serving_label)
             // Numbers the user supplied are not an estimate. Flagging pasted
