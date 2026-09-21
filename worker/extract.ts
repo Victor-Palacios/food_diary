@@ -41,7 +41,24 @@ const MAX_TEXT_CHARS = 600
  * wrangler.jsonc, so swapping a model is a config change, not a code change.
  */
 const DEFAULT_VISION_MODEL = 'meta/llama-3.2-90b-vision-instruct'
-const DEFAULT_TEXT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct'
+
+/**
+ * Deliberately a small mixture-of-experts model (~3B active), not a dense
+ * 70B. The job is "turn one sentence into seven numbers" -- short input,
+ * short structured output. A big dense model spends tens of seconds on that
+ * for no gain in accuracy, and the user is holding a phone.
+ */
+const DEFAULT_TEXT_MODEL = 'nvidia/nemotron-3.5-lightning-30b-a3b'
+
+/**
+ * Total wall-clock budget for the upstream work, shared across a retry.
+ * Cloudflare's edge abandons the request near 100s and returns a bare 524,
+ * so finish before that and return something the user can act on.
+ */
+const TOTAL_BUDGET_MS = 85_000
+
+/** No point starting a call that cannot plausibly finish. */
+const MIN_ATTEMPT_MS = 8_000
 
 const LABEL_PROMPT = `You are reading a printed nutrition facts panel from a photograph.
 
@@ -246,24 +263,27 @@ export async function handleExtract(
   // instructions more reliably than the vision variant does.
   const model = kind === 'text' ? env.NVIDIA_TEXT_MODEL || DEFAULT_TEXT_MODEL : visionModel
 
-  // Cloudflare's edge abandons the request at ~100s and hands the browser a
-  // bare 524 with nothing useful in it. Give up first, so the user gets a
-  // real message and a suggestion instead. Vision calls get longer because a
-  // cold vision NIM genuinely can take most of a minute.
-  const timeoutMs = kind === 'text' ? 40_000 : 70_000
+  // One shared deadline rather than a per-call timeout, so a fast failure
+  // followed by a retry cannot add up to more than the edge will wait for.
+  const deadline = Date.now() + TOTAL_BUDGET_MS
 
-  let result = await callModel(env, baseUrl, model, messageContent, timeoutMs, kind)
+  let result = await callModel(env, baseUrl, model, messageContent, deadline, kind)
 
   // NVIDIA retires hosted models, and a retired id answers 404/410 forever.
   // Rather than leave the feature dead until someone notices, fall back to
   // the vision model, which handles plain text perfectly well. Costs a little
   // more per call; beats being broken.
-  if (result.retired && kind === 'text' && model !== visionModel) {
+  if (
+    result.retired &&
+    kind === 'text' &&
+    model !== visionModel &&
+    deadline - Date.now() > MIN_ATTEMPT_MS
+  ) {
     console.error(
       `NVIDIA_TEXT_MODEL "${model}" is retired (${result.status}); ` +
         `falling back to "${visionModel}". Update the var to silence this.`,
     )
-    result = await callModel(env, baseUrl, visionModel, messageContent, timeoutMs, kind)
+    result = await callModel(env, baseUrl, visionModel, messageContent, deadline, kind)
   }
 
   if (result.error) return result.error
@@ -297,10 +317,11 @@ async function callModel(
   baseUrl: string,
   model: string,
   messageContent: Array<Record<string, unknown>>,
-  timeoutMs: number,
+  deadline: number,
   kind: string,
 ): Promise<CallResult> {
   const startedAt = Date.now()
+  const timeoutMs = Math.max(MIN_ATTEMPT_MS, deadline - startedAt)
 
   let upstream: Response
   try {
@@ -334,9 +355,11 @@ async function callModel(
       return {
         error: json(
           {
+            // Name the model: if this keeps happening it is a model choice
+            // problem, not a transient one, and the var is one edit away.
             error:
-              `The model did not answer within ${Math.round(timeoutMs / 1000)}s. ` +
-              `It may be busy — try again, or type the numbers in by hand.`,
+              `"${model}" did not answer within ${Math.round(elapsed / 1000)}s. ` +
+              `It may be queued or cold — try again, or type the numbers in by hand.`,
           },
           504,
         ),

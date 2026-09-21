@@ -36,6 +36,10 @@
     //   curl https://integrate.api.nvidia.com/v1/models
     // If this one goes, the Worker falls back to the vision model and logs
     // the swap, so the feature keeps working until this line is updated.
-    "NVIDIA_TEXT_MODEL": "nvidia/llama-3.1-nemotron-70b-instruct"
+    //
+    // Small mixture-of-experts (~3B active) on purpose: the job is one
+    // sentence in, seven numbers out. A dense 70B spends tens of seconds on
+    // that for no accuracy gain, and the user is holding a phone.
+    "NVIDIA_TEXT_MODEL": "nvidia/nemotron-3.5-lightning-30b-a3b"
   }
 }

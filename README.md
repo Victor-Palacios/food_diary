@@ -380,7 +380,7 @@ Two things keep that from breaking the feature:
 
 ### Timeouts
 
-The upstream call is bounded — 40s for text, 70s for vision. Without that,
+The upstream work shares an 85s budget across any retry. Without a bound,
 Cloudflare's edge abandons the request at ~100s and the browser gets a bare
 **524** with nothing actionable in it. The Worker now gives up first and
 returns a real message.
