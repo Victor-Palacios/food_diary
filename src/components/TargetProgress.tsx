@@ -1,16 +1,16 @@
-import { formatMetric } from '../lib/format'
+import { formatMetric, NOT_RECORDED } from '../lib/format'
 import {
   METRIC_LABELS,
   METRIC_UNITS,
   TARGETED_METRICS,
   isCeiling,
   targetFor,
-  type Nutrition,
+  type NutritionInput,
   type Target,
 } from '../lib/types'
 
 interface Props {
-  totals: Nutrition
+  totals: NutritionInput
   target: Target | null
 }
 
@@ -27,7 +27,12 @@ export function TargetProgress({ totals, target }: Props) {
     <div>
       {TARGETED_METRICS.map((metric) => {
         const goal = targetFor(target, metric)
-        const value = totals[metric]
+        const raw = totals[metric]
+        // An unrecorded metric has no progress to show. Drawing an empty bar
+        // against the target would read as "none eaten", which is a
+        // different and wrong claim.
+        const unknown = raw === null || raw === undefined
+        const value = unknown ? 0 : raw
         const pct = goal > 0 ? (value / goal) * 100 : 0
         const ceiling = isCeiling(metric)
 
@@ -49,7 +54,7 @@ export function TargetProgress({ totals, target }: Props) {
                 {ceiling ? ' (max)' : ''}
               </span>
               <span className="prog-val">
-                <b>{formatMetric(metric, value)}</b>
+                <b>{unknown ? NOT_RECORDED : formatMetric(metric, value)}</b>
                 <span className="muted">
                   {' / '}
                   {formatMetric(metric, goal)} {METRIC_UNITS[metric]}
@@ -59,9 +64,14 @@ export function TargetProgress({ totals, target }: Props) {
             <div className="prog-track">
               <div
                 className={`prog-fill ${tone}`}
-                style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+                style={{ width: unknown ? '0%' : `${Math.min(100, Math.max(0, pct))}%` }}
               />
             </div>
+            {unknown ? (
+              <div className="sub" style={{ marginTop: 4 }}>
+                Not recorded for every entry today.
+              </div>
+            ) : null}
             {ceiling ? (
               <div className="sub" style={{ marginTop: 4 }}>
                 {remaining >= 0

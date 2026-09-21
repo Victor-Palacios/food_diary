@@ -110,6 +110,9 @@ No CLI needed — all of this can be done in the browser at
    `food_usage` views, and enables RLS with owner-scoped policies on all three
    tables.
 
+   Then run `supabase/migrations/0002_optional_fiber.sql` the same way. It
+   makes fiber nullable — see [Fiber is optional](#fiber-is-optional).
+
    With the CLI instead, if you prefer:
 
    ```sh
@@ -142,8 +145,31 @@ No CLI needed — all of this can be done in the browser at
    in the app, so each one becomes its own row and old blocks keep their
    original target.
 
-The food library is intentionally not seeded. Add the twenty foods of a typical
+7. **Optional: import an existing food list.** `supabase/import_food_data.sql`
+   loads 150 foods generated from the `Food_Data` sheet of `Food_Journal.xlsx`.
+   Paste and run it; nothing to edit. It finds the single account itself and
+   skips any name already in the library, so running it twice is harmless.
+
+Otherwise the food library starts empty — add the twenty foods of a typical
 week as you first eat them.
+
+### Fiber is optional
+
+`foods.fiber_g` and `log_entries.s_fiber_g` are **nullable**, and NULL means
+*not recorded* — deliberately distinct from a measured 0.
+
+Most labels and restaurant data simply do not print fiber. Storing 0 for those
+would make an unknown indistinguishable from a real zero and quietly drag the
+fiber average down, which is the same mistake as counting an unlogged day as a
+0-calorie one. So:
+
+- Leaving the fiber box empty stores NULL. Every other metric still treats
+  blank as 0, because calories and macros are always on the label or the scale.
+- A **day's** fiber is known only when every entry that day recorded it;
+  otherwise `daily_totals.fiber_g` is NULL rather than a partial sum.
+- Fiber averages cover only the days that recorded it, and the dashboard
+  reports how many days that was.
+- Unrecorded values render as `—`, never as `0`.
 
 ---
 

@@ -1,4 +1,4 @@
-import { METRICS, METRIC_LABELS, METRIC_UNITS, type Metric } from '../lib/types'
+import { METRICS, METRIC_LABELS, METRIC_UNITS, type Metric, type NutritionInput } from '../lib/types'
 
 export type NutritionDraft = Record<Metric, string>
 
@@ -12,9 +12,14 @@ export const EMPTY_NUTRITION_DRAFT: NutritionDraft = {
   fiber_g: '',
 }
 
-export function draftFromNutrition(source: Record<Metric, number>): NutritionDraft {
+export function draftFromNutrition(source: NutritionInput): NutritionDraft {
   const draft = { ...EMPTY_NUTRITION_DRAFT }
-  for (const metric of METRICS) draft[metric] = String(source[metric] ?? 0)
+  for (const metric of METRICS) {
+    const value = source[metric]
+    // Unrecorded fiber shows as an empty box, not a 0 the user has to notice
+    // and delete.
+    draft[metric] = value === null || value === undefined ? '' : String(value)
+  }
   return draft
 }
 
@@ -36,7 +41,9 @@ export function NutritionFields({ value, onChange }: Props) {
   return (
     <>
       <div className="sub" style={{ marginBottom: 10 }}>
-        Per one serving. Blank counts as zero.
+        Per one serving. Blank counts as zero, except fiber — leave that empty
+        when it is not on the label and it stays out of the averages instead of
+        counting as none.
       </div>
       <Field metric="calories" value={value} set={set} />
       <div className="grid-2">

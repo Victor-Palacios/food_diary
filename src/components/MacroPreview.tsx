@@ -1,8 +1,8 @@
-import { formatCalories, formatGrams } from '../lib/format'
-import type { Nutrition } from '../lib/types'
+import { formatCalories, formatGrams, NOT_RECORDED } from '../lib/format'
+import type { NutritionInput } from '../lib/types'
 
 interface Props {
-  nutrition: Nutrition
+  nutrition: NutritionInput
   /** Shows sat/trans fat too. Off in the entry sheet, on where detail matters. */
   detailed?: boolean
 }
@@ -32,10 +32,11 @@ export function MacroPreview({ nutrition, detailed }: Props) {
   )
 }
 
-function Cell({ label, value }: { label: string; value: number }) {
+function Cell({ label, value }: { label: string; value: number | null }) {
   return (
     <div className="macro">
-      <div className="macro-v">{formatGrams(value)}</div>
+      {/* A dash, not a zero: fiber is often simply not recorded. */}
+      <div className="macro-v">{value === null ? NOT_RECORDED : formatGrams(value)}</div>
       <div className="macro-k">{label}</div>
     </div>
   )

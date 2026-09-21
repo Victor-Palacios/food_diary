@@ -60,6 +60,15 @@ const DEFAULT_TEXT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct'
  */
 const TOTAL_BUDGET_MS = 300_000
 
+/**
+ * Budget for a reply that is NOT streamed, and so has no heartbeats keeping
+ * it alive. Cloudflare's edge abandons a silent request near 100s, so this
+ * must finish before that or the browser gets a bare 524 instead of an
+ * error it can act on. Only a client cached from before streaming existed
+ * takes this path.
+ */
+const BUFFERED_BUDGET_MS = 85_000
+
 /** Frequent enough that no intermediary sees an idle connection. */
 const HEARTBEAT_MS = 10_000
 
@@ -274,26 +283,29 @@ export async function handleExtract(
   // Everything above this point fails fast and gets an ordinary status code.
   // From here the model call can take minutes, so the reply is streamed --
   // see streamWhileWorking for why.
-  const work = () =>
-    runExtraction(env, baseUrl, model, visionModel, messageContent, kind).then((final) =>
-      kind === 'text' && final.ok
-        ? { ...final, result: applyStatedValues(final.result, description) }
-        : final,
+  const work = (budgetMs: number) =>
+    runExtraction(env, baseUrl, model, visionModel, messageContent, kind, budgetMs).then(
+      (final) =>
+        kind === 'text' && final.ok
+          ? { ...final, result: applyStatedValues(final.result, description) }
+          : final,
     )
 
   // Only stream to a client that asked for it. One cached from before
   // streaming existed would parse newline-delimited output as JSON, fail,
-  // and silently show an empty form; it gets a buffered reply instead. That
-  // reply is still subject to the edge's ~100s limit, which is the cost of
-  // running old code, but it is correct rather than quietly wrong.
+  // and silently show an empty form; it gets a buffered reply instead.
+  //
+  // A buffered reply sends no heartbeats, so it must also finish inside the
+  // edge's ~100s window -- the long budget is only safe behind a stream.
+  // Running old code therefore costs the extra time, not correctness.
   if (!(request.headers.get('accept') ?? '').includes('ndjson')) {
-    const final = await work()
+    const final = await work(BUFFERED_BUDGET_MS)
     return final.ok
       ? json(final.result)
       : json({ error: final.error, detail: final.detail }, 502)
   }
 
-  return streamWhileWorking(work)
+  return streamWhileWorking(() => work(TOTAL_BUDGET_MS))
 }
 
 /**
@@ -344,10 +356,11 @@ async function runExtraction(
   visionModel: string,
   messageContent: Array<Record<string, unknown>>,
   kind: string,
+  budgetMs: number,
 ): Promise<Final> {
   // One shared deadline rather than a per-call timeout, so a fast failure
   // followed by a retry cannot add up to more than the whole budget.
-  const deadline = Date.now() + TOTAL_BUDGET_MS
+  const deadline = Date.now() + budgetMs
 
   let result = await callModel(env, baseUrl, model, messageContent, deadline, kind)
 

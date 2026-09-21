@@ -4,7 +4,7 @@ import { IconBack, IconForward } from '../components/Icons'
 import * as api from '../lib/api'
 import { useAppData } from '../lib/AppData'
 import { aggregate, byDate, type Aggregate } from '../lib/stats'
-import { formatCalories, formatMean, formatMetric } from '../lib/format'
+import { formatCalories, formatMean, formatOptional } from '../lib/format'
 import { BLOCK_DAYS } from '../lib/config'
 import {
   addDays,
@@ -25,6 +25,7 @@ import {
   METRIC_SHORT,
   METRIC_UNITS,
   type DailyTotals,
+  type Metric,
 } from '../lib/types'
 
 type Range = 'day' | 'week' | 'month' | 'block'
@@ -278,8 +279,16 @@ function BlockView({
                   {METRICS.map((metric) => (
                     <tr key={metric}>
                       <td>{METRIC_LABELS[metric]}</td>
-                      <td>{formatMean(metric, stats.mean[metric])}</td>
-                      <td>{formatMean(metric, stats.median[metric])}</td>
+                      <td>
+                        {stats.mean[metric] === null
+                          ? '—'
+                          : formatMean(metric, stats.mean[metric] as number)}
+                      </td>
+                      <td>
+                        {stats.median[metric] === null
+                          ? '—'
+                          : formatMean(metric, stats.median[metric] as number)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -308,7 +317,13 @@ function Coverage({ stats }: { stats: Aggregate }) {
   )
 }
 
-function MetricGrid({ nutrition, caption }: { nutrition: Record<string, number>; caption: string }) {
+function MetricGrid({
+  nutrition,
+  caption,
+}: {
+  nutrition: Partial<Record<Metric, number | null>>
+  caption: string
+}) {
   return (
     <>
       <h2>{caption}</h2>
@@ -319,7 +334,7 @@ function MetricGrid({ nutrition, caption }: { nutrition: Record<string, number>;
               <tr key={metric}>
                 <td>{METRIC_LABELS[metric]}</td>
                 <td>
-                  {formatMetric(metric, nutrition[metric] ?? 0)}{' '}
+                  {formatOptional(metric, nutrition[metric])}{' '}
                   <span className="muted">{METRIC_UNITS[metric]}</span>
                 </td>
               </tr>
@@ -360,7 +375,7 @@ function DailyTable({ dates, days }: { dates: IsoDate[]; days: DailyTotals[] }) 
                   <td>{formatShort(date)}</td>
                   {METRICS.map((metric) => (
                     <td key={metric} className={row ? undefined : 'unlogged'}>
-                      {row ? formatMetric(metric, row[metric]) : '—'}
+                      {row ? formatOptional(metric, row[metric]) : '—'}
                     </td>
                   ))}
                 </tr>

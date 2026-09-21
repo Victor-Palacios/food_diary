@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { aggregate, mean, median } from './stats'
+import { aggregate, mean, median, scale, sumNutrition } from './stats'
 import { addDays, dateRange, daysBetween, endOfMonth, endOfWeek, startOfMonth, startOfWeek } from './dates'
 import { formatMultiplier, parseMultiplier, parseNumber } from './format'
 import type { DailyTotals } from './types'
@@ -19,6 +19,7 @@ function day(date: string, calories: number): DailyTotals {
     owner_id: 'o',
     eaten_on: date,
     entry_count: 1,
+    fiber_entry_count: 1,
     calories,
     protein_g: calories / 10,
     carbs_g: 0,
@@ -215,5 +216,90 @@ describe('nutrition field parsing', () => {
 
   it('accepts decimals', () => {
     expect(parseNumber('1.5')).toBe(1.5)
+  })
+})
+
+/**
+ * Fiber is the one metric that is routinely not recorded, so NULL means
+ * "unknown" and must never be averaged in as a zero. This is the same rule
+ * as excluding unlogged days, applied one level down.
+ */
+describe('fiber may be unrecorded', () => {
+  const start = '2026-03-01'
+  const end = '2026-03-21'
+
+  function withFiber(date: string, calories: number, fiber: number | null): DailyTotals {
+    return { ...day(date, calories), fiber_g: fiber, fiber_entry_count: fiber === null ? 0 : 1 }
+  }
+
+  it('averages fiber over only the days that recorded it', () => {
+    // Two days at 20 g and one unrecorded. Counting the third as 0 would
+    // give 13.3; the honest answer over known days is 20.
+    const days = [
+      withFiber('2026-03-01', 2000, 20),
+      withFiber('2026-03-02', 2000, 20),
+      withFiber('2026-03-03', 2000, null),
+    ]
+    const stats = aggregate(days, start, end, 21)
+
+    expect(stats.daysLogged).toBe(3)
+    expect(stats.fiberDaysKnown).toBe(2)
+    expect(stats.mean.fiber_g).toBe(20)
+    // Calories are unaffected -- all three days recorded those.
+    expect(stats.mean.calories).toBe(2000)
+  })
+
+  it('reports fiber as unknown when no day recorded it', () => {
+    const days = [withFiber('2026-03-01', 2000, null), withFiber('2026-03-02', 2000, null)]
+    const stats = aggregate(days, start, end, 21)
+
+    expect(stats.fiberDaysKnown).toBe(0)
+    expect(stats.mean.fiber_g).toBeNull()
+    expect(stats.median.fiber_g).toBeNull()
+    expect(stats.total.fiber_g).toBeNull()
+  })
+
+  it('keeps a recorded zero distinct from unrecorded', () => {
+    const stats = aggregate([withFiber('2026-03-01', 2000, 0)], start, end, 21)
+    expect(stats.fiberDaysKnown).toBe(1)
+    expect(stats.mean.fiber_g).toBe(0)
+  })
+})
+
+describe('summing a day of entries', () => {
+  it('marks the day unknown when any entry lacks fiber', () => {
+    const total = sumNutrition([
+      { calories: 100, fiber_g: 3 },
+      { calories: 200, fiber_g: null },
+    ])
+    expect(total.calories).toBe(300)
+    expect(total.fiber_g).toBeNull()
+  })
+
+  it('sums fiber when every entry recorded it', () => {
+    const total = sumNutrition([
+      { calories: 100, fiber_g: 3 },
+      { calories: 200, fiber_g: 4 },
+    ])
+    expect(total.fiber_g).toBe(7)
+  })
+})
+
+describe('scaling by a multiplier', () => {
+  it('leaves unrecorded fiber unrecorded', () => {
+    const out = scale(
+      { calories: 100, protein_g: 10, carbs_g: 5, fat_total_g: 2, fat_sat_g: 1, fat_trans_g: 0, fiber_g: null },
+      2,
+    )
+    expect(out.calories).toBe(200)
+    expect(out.fiber_g).toBeNull()
+  })
+
+  it('scales fiber when it is known', () => {
+    const out = scale(
+      { calories: 100, protein_g: 10, carbs_g: 5, fat_total_g: 2, fat_sat_g: 1, fat_trans_g: 0, fiber_g: 3 },
+      2,
+    )
+    expect(out.fiber_g).toBe(6)
   })
 })

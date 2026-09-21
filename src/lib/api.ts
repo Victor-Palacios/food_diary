@@ -7,7 +7,7 @@ import type {
   FoodSource,
   FoodWithUsage,
   LogEntry,
-  Nutrition,
+  NutritionInput,
   Snapshot,
   Target,
 } from './types'
@@ -31,9 +31,16 @@ function num(value: unknown): number {
   return Number.isFinite(n) ? n : 0
 }
 
+/** null survives coercion: it means "not recorded", not zero. */
+function numOrNull(value: unknown): number | null {
+  return value === null || value === undefined ? null : num(value)
+}
+
 function coerceFood<T extends Record<string, unknown>>(row: T): T {
   const out = { ...row } as Record<string, unknown>
-  for (const metric of METRICS) out[metric] = num(row[metric])
+  for (const metric of METRICS) {
+    out[metric] = metric === 'fiber_g' ? numOrNull(row[metric]) : num(row[metric])
+  }
   if (row.serving_grams != null) out.serving_grams = num(row.serving_grams)
   return out as T
 }
@@ -41,8 +48,9 @@ function coerceFood<T extends Record<string, unknown>>(row: T): T {
 function coerceEntry(row: Record<string, unknown>): LogEntry {
   const out = { ...row } as Record<string, unknown>
   for (const metric of METRICS) {
-    out[metric] = num(row[metric])
-    out[`s_${metric}`] = num(row[`s_${metric}`])
+    const optional = metric === 'fiber_g'
+    out[metric] = optional ? numOrNull(row[metric]) : num(row[metric])
+    out[`s_${metric}`] = optional ? numOrNull(row[`s_${metric}`]) : num(row[`s_${metric}`])
   }
   out.multiplier = num(row.multiplier)
   return out as unknown as LogEntry
@@ -50,8 +58,11 @@ function coerceEntry(row: Record<string, unknown>): LogEntry {
 
 function coerceDaily(row: Record<string, unknown>): DailyTotals {
   const out = { ...row } as Record<string, unknown>
-  for (const metric of METRICS) out[metric] = num(row[metric])
+  for (const metric of METRICS) {
+    out[metric] = metric === 'fiber_g' ? numOrNull(row[metric]) : num(row[metric])
+  }
   out.entry_count = num(row.entry_count)
+  out.fiber_entry_count = num(row.fiber_entry_count)
   return out as unknown as DailyTotals
 }
 
@@ -70,7 +81,7 @@ function coerceTarget(row: Record<string, unknown>): Target {
 // Foods
 // ---------------------------------------------------------------------------
 
-export type FoodInput = Nutrition & {
+export type FoodInput = NutritionInput & {
   name: string
   brand: string | null
   serving_label: string

@@ -1,4 +1,4 @@
-import { METRICS, type DailyTotals, type Metric, type Nutrition } from './types'
+import { METRICS, type DailyTotals, type Metric, type NutritionInput } from './types'
 import { ZERO_NUTRITION } from './types'
 import type { IsoDate } from './dates'
 
@@ -18,12 +18,18 @@ export interface Aggregate {
   daysLogged: number
   /** Total days in the window, logged or not. */
   daysInWindow: number
-  /** Mean per LOGGED day. */
-  mean: Nutrition
-  /** Median per LOGGED day. */
-  median: Nutrition
+  /** Mean per LOGGED day. Fiber is null when no day recorded it. */
+  mean: NutritionInput
+  /** Median per LOGGED day. Fiber is null when no day recorded it. */
+  median: NutritionInput
   /** Sum across logged days. Meaningful for a single day, not for a range. */
-  total: Nutrition
+  total: NutritionInput
+  /**
+   * Logged days whose fiber is fully recorded. Fiber averages cover only
+   * these, so the UI can say what the figure is actually based on rather
+   * than passing off a partial average as the whole picture.
+   */
+  fiberDaysKnown: number
 }
 
 export function mean(values: number[]): number {
@@ -56,16 +62,31 @@ export function aggregate(
     (d) => d.eaten_on >= windowStart && d.eaten_on <= windowEnd && d.entry_count > 0,
   )
 
+  // Fiber is averaged only over days that actually recorded it. Folding an
+  // unrecorded day in as a zero would understate the average and never say
+  // so -- the same trap as counting an unlogged day as 0 calories.
+  const fiberDays = inWindow.filter((d) => d.fiber_g !== null && d.fiber_g !== undefined)
+
   const result: Aggregate = {
     daysLogged: inWindow.length,
     daysInWindow,
     mean: { ...ZERO_NUTRITION },
     median: { ...ZERO_NUTRITION },
     total: { ...ZERO_NUTRITION },
+    fiberDaysKnown: fiberDays.length,
   }
 
   for (const metric of METRICS) {
-    const values = inWindow.map((d) => Number(d[metric]) || 0)
+    const source = metric === 'fiber_g' ? fiberDays : inWindow
+    const values = source.map((d) => Number(d[metric]) || 0)
+
+    if (metric === 'fiber_g' && values.length === 0) {
+      result.mean.fiber_g = null
+      result.median.fiber_g = null
+      result.total.fiber_g = null
+      continue
+    }
+
     result.mean[metric] = mean(values)
     result.median[metric] = median(values)
     result.total[metric] = values.reduce((a, b) => a + b, 0)
@@ -74,19 +95,45 @@ export function aggregate(
   return result
 }
 
-/** Sums a set of nutrition-bearing rows (log entries for one day). */
-export function sumNutrition(rows: Array<Partial<Record<Metric, number>>>): Nutrition {
-  const out = { ...ZERO_NUTRITION }
+/**
+ * Sums a set of nutrition-bearing rows (log entries for one day).
+ *
+ * The day's fiber is known only when every row recorded it. One unrecorded
+ * entry makes the day's total a partial sum, and reporting a partial sum as
+ * the whole is how an average quietly drifts low.
+ */
+export function sumNutrition(
+  rows: Array<Partial<Record<Metric, number | null>>>,
+): NutritionInput {
+  const out: NutritionInput = { ...ZERO_NUTRITION }
+  let fiberComplete = true
+
   for (const row of rows) {
-    for (const metric of METRICS) out[metric] += Number(row[metric]) || 0
+    for (const metric of METRICS) {
+      if (metric === 'fiber_g') {
+        if (row.fiber_g === null || row.fiber_g === undefined) fiberComplete = false
+        else out.fiber_g = (out.fiber_g ?? 0) + (Number(row.fiber_g) || 0)
+        continue
+      }
+      out[metric] += Number(row[metric]) || 0
+    }
   }
+
+  if (!fiberComplete) out.fiber_g = null
   return out
 }
 
 /** Scales a per-serving snapshot by a multiplier, for live preview. */
-export function scale(nutrition: Nutrition, multiplier: number): Nutrition {
-  const out = { ...ZERO_NUTRITION }
-  for (const metric of METRICS) out[metric] = (Number(nutrition[metric]) || 0) * multiplier
+export function scale(nutrition: NutritionInput, multiplier: number): NutritionInput {
+  const out: NutritionInput = { ...ZERO_NUTRITION }
+  for (const metric of METRICS) {
+    if (metric === 'fiber_g') {
+      // Unrecorded stays unrecorded however much of it was eaten.
+      out.fiber_g = nutrition.fiber_g === null ? null : (Number(nutrition.fiber_g) || 0) * multiplier
+      continue
+    }
+    out[metric] = (Number(nutrition[metric]) || 0) * multiplier
+  }
   return out
 }
 

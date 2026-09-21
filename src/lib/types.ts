@@ -51,8 +51,23 @@ export const METRIC_UNITS: Record<Metric, string> = {
   fiber_g: 'g',
 }
 
-/** Per-serving nutrition, the shape shared by a food and an entry's snapshot. */
+/**
+ * Metrics that may legitimately be unrecorded.
+ *
+ * Fiber is routinely absent from labels and restaurant data, so NULL means
+ * "not recorded" and is deliberately distinct from a measured 0. Treating
+ * the two alike would drag the fiber average down without ever saying why --
+ * the same mistake as counting an unlogged day as a 0-calorie one.
+ */
+export type OptionalMetric = 'fiber_g'
+
+/** Per-serving nutrition with everything known. Used for computed totals. */
 export type Nutrition = Record<Metric, number>
+
+/** Nutrition as entered or stored, where fiber may be unrecorded. */
+export type NutritionInput = Omit<Nutrition, OptionalMetric> & {
+  fiber_g: number | null
+}
 
 export const ZERO_NUTRITION: Nutrition = {
   calories: 0,
@@ -64,7 +79,7 @@ export const ZERO_NUTRITION: Nutrition = {
   fiber_g: 0,
 }
 
-export interface Food extends Nutrition {
+export interface Food extends NutritionInput {
   id: string
   owner_id: string
   name: string
@@ -84,7 +99,7 @@ export interface FoodWithUsage extends Food {
   last_eaten_at: string | null
 }
 
-export interface LogEntry extends Nutrition {
+export interface LogEntry extends NutritionInput {
   id: string
   owner_id: string
   eaten_on: string
@@ -98,16 +113,18 @@ export interface LogEntry extends Nutrition {
   s_fat_total_g: number
   s_fat_sat_g: number
   s_fat_trans_g: number
-  s_fiber_g: number
+  s_fiber_g: number | null
   s_source: FoodSource
   s_is_estimate: boolean
   note: string | null
 }
 
-export interface DailyTotals extends Nutrition {
+export interface DailyTotals extends NutritionInput {
   owner_id: string
   eaten_on: string
   entry_count: number
+  /** How many of the day's entries recorded fiber. */
+  fiber_entry_count: number
   has_estimate: boolean
 }
 
@@ -150,7 +167,7 @@ export function isCeiling(metric: TargetedMetric): boolean {
 }
 
 /** The per-serving snapshot carried onto a new log entry. */
-export interface Snapshot extends Nutrition {
+export interface Snapshot extends NutritionInput {
   label: string
   source: FoodSource
   is_estimate: boolean

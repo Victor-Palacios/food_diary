@@ -16,7 +16,7 @@ import { scale } from '../lib/stats'
 import { formatMultiplier, parseNumber } from '../lib/format'
 import { formatRelative, type IsoDate } from '../lib/dates'
 import { METRICS } from '../lib/types'
-import type { FoodSource, FoodWithUsage, LogEntry, Nutrition, Snapshot } from '../lib/types'
+import type { FoodSource, FoodWithUsage, LogEntry, NutritionInput, Snapshot } from '../lib/types'
 
 type Mode = 'pick' | 'quantity' | 'oneoff' | 'edit'
 
@@ -69,7 +69,7 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
   }, [foods, search])
 
   /** Per-serving values currently in play, whichever mode we are in. */
-  const perServing: Nutrition = useMemo(() => {
+  const perServing: NutritionInput = useMemo(() => {
     if (mode === 'edit' && editing) {
       return {
         calories: editing.s_calories,
@@ -92,8 +92,16 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
         fiber_g: selected.fiber_g,
       }
     }
-    const out = { ...EMPTY_NUTRITION_DRAFT } as unknown as Nutrition
-    for (const metric of METRICS) out[metric] = parseNumber(oneOffDraft[metric]) ?? 0
+    const out = { ...EMPTY_NUTRITION_DRAFT } as unknown as NutritionInput
+    for (const metric of METRICS) {
+      // Blank fiber means "not recorded", so it stays null rather than
+      // becoming a zero nobody measured.
+      if (metric === 'fiber_g') {
+        out.fiber_g = oneOffDraft.fiber_g.trim() ? (parseNumber(oneOffDraft.fiber_g) ?? 0) : null
+        continue
+      }
+      out[metric] = parseNumber(oneOffDraft[metric]) ?? 0
+    }
     return out
   }, [mode, editing, selected, oneOffDraft])
 

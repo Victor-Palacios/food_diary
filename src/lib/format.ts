@@ -1,5 +1,18 @@
 import type { Metric } from './types'
 
+/** What an unrecorded value looks like everywhere in the UI. */
+export const NOT_RECORDED = '—'
+
+/**
+ * Renders a value that may be unrecorded. A dash is not a zero, and the
+ * difference matters: fiber is routinely absent from labels, and showing 0
+ * would understate it silently.
+ */
+export function formatOptional(metric: Metric, value: number | null | undefined): string {
+  if (value === null || value === undefined) return NOT_RECORDED
+  return formatMetric(metric, value)
+}
+
 /** Calories read as whole numbers; grams to one decimal, trailing .0 dropped. */
 export function formatMetric(metric: Metric, value: number): string {
   if (metric === 'calories') return Math.round(value).toLocaleString('en-US')
