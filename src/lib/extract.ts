@@ -121,10 +121,14 @@ async function post(request: Record<string, unknown>): Promise<ExtractResult> {
   const payload: unknown = await response.json().catch(() => null)
 
   if (!response.ok) {
-    const message =
-      payload && typeof payload === 'object' && 'error' in payload
-        ? String((payload as { error: unknown }).error)
-        : `Extraction failed (${response.status}).`
+    const body = (payload ?? {}) as { error?: unknown; detail?: unknown }
+    let message =
+      'error' in body ? String(body.error) : `Extraction failed (${response.status}).`
+    // The server attaches what the model actually said when it could not be
+    // parsed. Showing it turns "it failed" into something reportable.
+    if (typeof body.detail === 'string' && body.detail.trim()) {
+      message += `\n\nThe model replied: ${body.detail.trim()}`
+    }
     throw new Error(message)
   }
 

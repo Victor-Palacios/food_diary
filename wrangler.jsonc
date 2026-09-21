@@ -37,9 +37,10 @@
     // If this one goes, the Worker falls back to the vision model and logs
     // the swap, so the feature keeps working until this line is updated.
     //
-    // Small mixture-of-experts (~3B active) on purpose: the job is one
-    // sentence in, seven numbers out. A dense 70B spends tens of seconds on
-    // that for no accuracy gain, and the user is holding a phone.
-    "NVIDIA_TEXT_MODEL": "nvidia/nemotron-3.5-lightning-30b-a3b"
+    // A dense 70B. A small mixture-of-experts model was tried first for
+    // speed and could not reliably turn a bulleted list of macros into the
+    // JSON this endpoint promises. A wrong or unparseable answer costs more
+    // than a few seconds of waiting, so accuracy wins.
+    "NVIDIA_TEXT_MODEL": "nvidia/llama-3.1-nemotron-70b-instruct"
   }
 }

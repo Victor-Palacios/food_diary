@@ -43,12 +43,13 @@ const MAX_TEXT_CHARS = 600
 const DEFAULT_VISION_MODEL = 'meta/llama-3.2-90b-vision-instruct'
 
 /**
- * Deliberately a small mixture-of-experts model (~3B active), not a dense
- * 70B. The job is "turn one sentence into seven numbers" -- short input,
- * short structured output. A big dense model spends tens of seconds on that
- * for no gain in accuracy, and the user is holding a phone.
+ * A dense 70B. The small mixture-of-experts model tried first was cheaper and
+ * faster but could not reliably turn a bulleted list of macros into the JSON
+ * this endpoint promises -- and a wrong or unparseable answer costs far more
+ * than a few extra seconds. Accuracy wins here; the 85s budget absorbs the
+ * latency.
  */
-const DEFAULT_TEXT_MODEL = 'nvidia/nemotron-3.5-lightning-30b-a3b'
+const DEFAULT_TEXT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct'
 
 /**
  * Total wall-clock budget for the upstream work, shared across a retry.
@@ -290,12 +291,22 @@ export async function handleExtract(
 
   const parsed = parseJsonObject(result.content ?? '')
   if (!parsed) {
+    // Log the whole reply: when this fires, the reply is the only evidence
+    // of why, and guessing at it costs far more than the log line.
+    console.error(
+      `Unparseable ${kind} reply from ${model} ` +
+        `(${result.content?.length ?? 0} chars): ${(result.content ?? '').slice(0, 1500)}`,
+    )
     return json(
       {
         error:
           kind === 'text'
             ? 'Could not read a result from that description. Enter it by hand.'
             : 'Could not read a result from that photo. Enter it by hand.',
+        // Echoed back so a failure can be diagnosed from the phone rather
+        // than by digging through Worker logs. It is the user's own content
+        // coming back, so nothing is disclosed that they did not send.
+        detail: (result.content ?? '').slice(0, 300),
       },
       422,
     )
@@ -340,7 +351,10 @@ async function callModel(
         // point estimate for plates. Neither wants creativity.
         temperature: 0.1,
         top_p: 0.9,
-        max_tokens: 700,
+        // Generous: the JSON is short, but a model that narrates before
+        // answering would otherwise be cut off mid-object, and a truncated
+        // reply is indistinguishable from a broken one.
+        max_tokens: 1500,
         stream: false,
       }),
     })
@@ -431,13 +445,41 @@ async function callModel(
 }
 
 /**
- * Models wrap JSON in prose or a markdown fence often enough that a bare
- * JSON.parse is not worth relying on. Take the outermost balanced object.
+ * Recovers the JSON object from a model reply.
+ *
+ * A model is not a parser, and this has to cope with everything they
+ * actually do: wrap the object in prose, fence it as markdown, narrate
+ * inside <think> tags first, or run out of tokens halfway through. Failing
+ * on any of those means telling the user "could not read a result" when the
+ * numbers were right there, so each case is handled rather than rejected.
  */
-function parseJsonObject(text: string): Record<string, unknown> | null {
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)
-  const candidate = fenced ? fenced[1] : text
+export function parseJsonObject(text: string): Record<string, unknown> | null {
+  let candidate = stripReasoning(text)
 
+  // Prefer a fenced block when there is one; models put the answer there.
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(candidate)
+  if (fenced) {
+    const fromFence = extractObject(fenced[1])
+    if (fromFence) return fromFence
+  }
+
+  // An unterminated fence means the reply was cut off inside it.
+  const openFence = /```(?:json)?\s*([\s\S]*)$/i.exec(candidate)
+  if (openFence) candidate = openFence[1]
+
+  return extractObject(candidate)
+}
+
+/** Drops <think> narration, closed or left hanging by a truncated reply. */
+function stripReasoning(text: string): string {
+  const closed = text.replace(/<think>[\s\S]*?<\/think>/gi, ' ')
+  const dangling = closed.search(/<think>/i)
+  // Text after an unclosed <think> is narration that never reached an answer,
+  // but anything before it may still hold one.
+  return dangling === -1 ? closed : closed.slice(0, dangling)
+}
+
+function extractObject(candidate: string): Record<string, unknown> | null {
   const start = candidate.indexOf('{')
   if (start === -1) return null
 
@@ -459,20 +501,35 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
     else if (ch === '{') depth++
     else if (ch === '}') {
       depth--
-      if (depth === 0) {
-        try {
-          const value: unknown = JSON.parse(candidate.slice(start, i + 1))
-          return value && typeof value === 'object' && !Array.isArray(value)
-            ? (value as Record<string, unknown>)
-            : null
-        } catch {
-          return null
-        }
-      }
+      if (depth === 0) return tryParse(candidate.slice(start, i + 1))
     }
   }
 
+  // Never balanced, so the reply was truncated. Close what is still open and
+  // salvage it: a partial object still carries most of the seven values, and
+  // the client defaults anything missing to 0 for the user to correct. Half a
+  // filled form beats an error message.
+  if (depth > 0) {
+    let repaired = candidate.slice(start)
+    if (inString) repaired += '"'
+    // Drop a key with no value, then any trailing comma, before closing.
+    repaired = repaired.replace(/,\s*"[^"]*"\s*:?\s*$/, '').replace(/,\s*$/, '')
+    repaired += '}'.repeat(depth)
+    return tryParse(repaired)
+  }
+
   return null
+}
+
+function tryParse(source: string): Record<string, unknown> | null {
+  try {
+    const value: unknown = JSON.parse(source)
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
 }
 
 function errorText(e: unknown): string {
