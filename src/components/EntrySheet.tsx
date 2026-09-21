@@ -365,8 +365,11 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
             if (result.name) setOneOffName(result.name)
             setOneOffDraft(draftFromNutrition(result.nutrition))
             setOneOffServing(result.serving_label)
-            setOneOffEstimate(true)
-            setOneOffSource('manual')
+            // Numbers the user supplied are not an estimate. Flagging pasted
+            // restaurant data as a guess would make it excludable from
+            // analysis later, which is exactly backwards.
+            setOneOffEstimate(result.estimated !== false)
+            setOneOffSource(result.estimated === false ? 'restaurant' : 'manual')
           }}
         />
 

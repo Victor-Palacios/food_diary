@@ -80,17 +80,34 @@ Rules:
 - Say in notes what you were unsure about. The user reviews every value before
   it is saved.`
 
-const TEXT_PROMPT = `You are estimating the nutrition of food from a short written
-description typed by someone logging what they ate. There is no label and no
-scale reading. This is an estimate and it will be recorded as one.
+const TEXT_PROMPT = `You are turning a short written description of a meal into
+nutrition numbers, for someone logging what they ate.
+
+There are TWO cases and you must tell them apart, because the answer is
+recorded differently.
+
+CASE A -- TRANSCRIBE. The description already states the nutrition, e.g.
+"chicken bowl 630 cal, 45g protein, 60g carbs, 22g fat, 8g fiber". Copy those
+numbers EXACTLY. Do not adjust, round, recalculate or second-guess them, even
+if they look wrong to you. For any of the seven the text does not state, use 0
+rather than inventing a value. Set "estimated": false.
+
+CASE B -- ESTIMATE. The description names food but no calorie figure, e.g.
+"2 eggs and toast with butter". Estimate the whole portion described. Set
+"estimated": true.
+
+If a calorie figure is stated but some macros are missing, that is still
+CASE A: transcribe what is given, use 0 for the rest, and say in notes which
+ones were absent.
 
 The description may list several items in one meal. Combine them into ONE
-total for the whole meal as described.
+total for the whole meal.
 
 Return ONLY a JSON object, no prose, no markdown fence:
 {
   "name": "short summary of the meal, e.g. \\"2 eggs, toast with butter, banana\\"",
-  "serving_label": "the portion you estimated, e.g. \\"1 meal as described\\"",
+  "serving_label": "the portion, e.g. \\"1 meal as described\\"",
+  "estimated": true or false,
   "nutrition": {
     "calories": number,
     "protein_g": number,
@@ -100,15 +117,15 @@ Return ONLY a JSON object, no prose, no markdown fence:
     "fat_trans_g": number,
     "fiber_g": number
   },
-  "notes": "what you assumed about portion sizes, brands and preparation"
+  "notes": "for CASE A, which values were absent from the text; for CASE B, what you assumed about portion sizes, brands and preparation"
 }
 
 Rules:
-- Where the description gives a quantity or a brand, use it exactly.
-- Where it does not, assume one typical serving and SAY SO in notes.
-- If a named restaurant dish has published nutrition data, use it and say so.
-- Numbers only, no units, no ranges. Give your single best estimate.
+- Numbers only, no units, no ranges. Strip "g", "mg", "kcal", "cal".
 - carbs_g is TOTAL carbohydrate, not net carbs.
+- Where the description gives a quantity or a brand, respect it exactly.
+- In CASE B, if a named restaurant dish has published nutrition data, use it
+  and say so in notes -- but this is still an estimate, so "estimated": true.
 - The user reviews and corrects every value before it is saved.`
 
 interface ExtractRequest {
@@ -194,7 +211,14 @@ export async function handleExtract(
         ]
 
   const baseUrl = env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1'
-  const model = env.NVIDIA_MODEL || 'meta/llama-3.2-90b-vision-instruct'
+
+  // A text description does not need a vision model. Routing it to a
+  // text-only model is cheaper and follows the transcribe-vs-estimate
+  // instructions more reliably than the vision variant does.
+  const model =
+    kind === 'text'
+      ? env.NVIDIA_TEXT_MODEL || 'meta/llama-3.3-70b-instruct'
+      : env.NVIDIA_MODEL || 'meta/llama-3.2-90b-vision-instruct'
 
   let upstream: Response
   try {

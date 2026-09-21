@@ -337,13 +337,29 @@ Three separate features, not one "upload a picture" flow:
 - **Plate estimation** (`kind: "plate"`), on the one-off entry form. Estimates
   an unlabelled plate from a photo. Written with `source = 'photo'` and
   `is_estimate = true`, and the UI labels it an estimate.
-- **Text estimation** (`kind: "text"`), also on the one-off entry form, and in
-  practice the most useful of the three. Type "chicken burrito bowl with rice
-  and guac" and the seven fields fill in. Same accuracy caveat as a plate and
-  the same `is_estimate = true`, but it needs no camera and covers the
-  restaurant case, which is the common unlabelled meal. Written with
-  `source = 'manual'` — `'photo'` is reserved for results that actually came
-  from a camera, so provenance stays honest.
+- **Text** (`kind: "text"`), also on the one-off entry form, and in practice
+  the most useful of the three. It covers two cases and tells them apart
+  itself, so there is no mode to choose:
+
+  | You type | It does | Recorded as |
+  |---|---|---|
+  | `Chicken bowl, 630 cal, 45g protein, 60g carbs, 22g fat` | Transcribes your figures verbatim, 0 for anything unstated | `is_estimate = false`, `source = 'restaurant'` |
+  | `2 eggs and toast with butter` | Estimates the whole portion | `is_estimate = true`, `source = 'manual'` |
+
+  That distinction matters: ~80% of intake comes from labels or published
+  restaurant data, and filing those exact figures as guesses would make real
+  data excludable from analysis later. The model returns an explicit
+  `estimated` flag; anything other than a literal `false` is treated as an
+  estimate, because over-flagging is recoverable and under-flagging quietly
+  corrupts the audit trail.
+
+  `source = 'photo'` is reserved for results that actually came from a camera,
+  so provenance stays honest.
+
+Text requests are routed to `NVIDIA_TEXT_MODEL` rather than the vision model —
+cheaper, and better at following the transcribe-versus-estimate rule, which is
+the part that has to be right. Both model ids are non-secret `vars` in
+`wrangler.jsonc` and can be changed without a code change.
 
 All three are **review-before-save**: the model prefills a form, the user
 confirms every value. Nothing is ever written to the log directly — the Worker

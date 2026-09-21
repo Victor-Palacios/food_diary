@@ -15,6 +15,13 @@ export interface ExtractResult {
   name: string
   serving_label: string
   nutrition: Nutrition
+  /**
+   * False only when the model transcribed figures the user supplied, rather
+   * than inventing them. Drives `is_estimate`, so pasted restaurant data is
+   * not filed as a guess. Absent means "assume estimate" -- over-flagging is
+   * recoverable, under-flagging quietly corrupts the audit trail.
+   */
+  estimated?: boolean
   /** Model's own words about what it saw. Shown so the review is informed. */
   notes?: string
 }
@@ -119,6 +126,8 @@ function normalize(payload: unknown): ExtractResult {
       typeof obj.serving_label === 'string' && obj.serving_label.trim()
         ? obj.serving_label
         : '1 serving',
+    // Only an explicit false counts as "the user gave me these numbers".
+    estimated: obj.estimated === false ? false : true,
     nutrition,
     notes: typeof obj.notes === 'string' ? obj.notes : undefined,
   }

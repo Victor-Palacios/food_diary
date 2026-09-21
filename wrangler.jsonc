@@ -25,6 +25,11 @@
   // binding set with `wrangler secret put NVIDIA_API_KEY` (see README).
   "vars": {
     "NVIDIA_BASE_URL": "https://integrate.api.nvidia.com/v1",
-    "NVIDIA_MODEL": "meta/llama-3.2-90b-vision-instruct"
+    // Vision model: reads a nutrition label or a plate photo.
+    "NVIDIA_MODEL": "meta/llama-3.2-90b-vision-instruct",
+    // Text-only model: parses or estimates a written description. Cheaper
+    // than the vision model and better at following the transcribe-vs-
+    // estimate rules, which is the part that has to be right.
+    "NVIDIA_TEXT_MODEL": "meta/llama-3.3-70b-instruct"
   }
 }
