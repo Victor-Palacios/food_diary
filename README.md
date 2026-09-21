@@ -378,12 +378,25 @@ Two things keep that from breaking the feature:
 - If nothing works, the error names the dead model and the variable to
   change, rather than saying "try again".
 
-### Timeouts
+### Timeouts, and why the reply is streamed
 
-The upstream work shares an 85s budget across any retry. Without a bound,
-Cloudflare's edge abandons the request at ~100s and the browser gets a bare
-**524** with nothing actionable in it. The Worker now gives up first and
-returns a real message.
+Cloudflare's edge abandons a request that has produced no bytes for around
+100 seconds and returns a bare **524**. Raising the Worker's own timeout past
+that buys nothing — it just replaces a useful error with an opaque one.
+
+So `/api/extract` streams. The response is newline-delimited: lines starting
+with `:` are heartbeats sent every 10s, and the final line carries the
+outcome. A connection that keeps emitting bytes is never idle, so the model
+gets the full **5-minute** budget, shared across any fallback retry.
+
+One consequence worth knowing: the HTTP status is fixed when the headers go
+out, long before the outcome is known, so a streamed reply is always `200`
+and success is carried in the body as `{ "ok": true, ... }` or
+`{ "ok": false, "error": ... }`. Validation failures happen before streaming
+starts and keep ordinary status codes (400, 413, 501).
+
+The buttons show elapsed seconds while waiting, because a minute of silence
+is indistinguishable from a hang.
 
 Photos are compressed client-side to keep the base64 payload under ~150 KB,
 stepping down through size and quality until it fits. NVIDIA's vision

@@ -118,21 +118,81 @@ async function post(request: Record<string, unknown>): Promise<ExtractResult> {
     )
   }
 
-  const payload: unknown = await response.json().catch(() => null)
-
-  if (!response.ok) {
-    const body = (payload ?? {}) as { error?: unknown; detail?: unknown }
-    let message =
-      'error' in body ? String(body.error) : `Extraction failed (${response.status}).`
-    // The server attaches what the model actually said when it could not be
-    // parsed. Showing it turns "it failed" into something reportable.
-    if (typeof body.detail === 'string' && body.detail.trim()) {
-      message += `\n\nThe model replied: ${body.detail.trim()}`
-    }
-    throw new Error(message)
+  // Validation failures answer immediately with an ordinary status. The model
+  // call takes too long for that, so it streams instead -- see below.
+  const streamed = (response.headers.get('content-type') ?? '').includes('ndjson')
+  if (!streamed) {
+    const payload: unknown = await response.json().catch(() => null)
+    if (!response.ok) throw new Error(errorFrom(payload, response.status))
+    return normalize(payload)
   }
 
-  return normalize(payload)
+  const final = await readFinalLine(response)
+  if (!final || final.ok !== true) {
+    throw new Error(errorFrom(final, response.status))
+  }
+  return normalize(final.result)
+}
+
+interface StreamFinal {
+  ok?: boolean
+  result?: unknown
+  error?: unknown
+  detail?: unknown
+}
+
+/**
+ * The Worker streams newline-delimited output: ':' lines are heartbeats that
+ * stop Cloudflare's edge timing the request out at ~100s, and the last line
+ * carries the outcome. Because the status is fixed before the result is
+ * known, it is always 200 here and success lives in `ok`.
+ */
+async function readFinalLine(response: Response): Promise<StreamFinal | null> {
+  const reader = response.body?.getReader()
+  if (!reader) return null
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let last: StreamFinal | null = null
+
+  const consume = (line: string) => {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith(':')) return
+    try {
+      last = JSON.parse(trimmed) as StreamFinal
+    } catch {
+      // A partial line; the next chunk completes it.
+    }
+  }
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    let newline: number
+    while ((newline = buffer.indexOf('\n')) !== -1) {
+      consume(buffer.slice(0, newline))
+      buffer = buffer.slice(newline + 1)
+    }
+  }
+  consume(buffer)
+
+  return last
+}
+
+function errorFrom(payload: unknown, status: number): string {
+  const body = (payload ?? {}) as { error?: unknown; detail?: unknown }
+  let message =
+    typeof body.error === 'string' && body.error
+      ? body.error
+      : `Extraction failed (${status}).`
+  // The server attaches what the model actually said when it could not be
+  // parsed. Showing it turns "it failed" into something reportable.
+  if (typeof body.detail === 'string' && body.detail.trim()) {
+    message += `\n\nThe model replied: ${body.detail.trim()}`
+  }
+  return message
 }
 
 /**

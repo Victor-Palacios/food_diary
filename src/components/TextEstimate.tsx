@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ExtractUnavailable, extractFromText, type ExtractResult } from '../lib/extract'
-import { useExtractionAvailable } from '../lib/useExtraction'
+import { useElapsedSeconds, useExtractionAvailable } from '../lib/useExtraction'
 
 interface Props {
   onResult: (result: ExtractResult) => void
@@ -31,6 +31,7 @@ export function TextEstimate({ onResult }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [notes, setNotes] = useState<string | null>(null)
   const [wasEstimated, setWasEstimated] = useState<boolean | null>(null)
+  const elapsed = useElapsedSeconds(busy)
 
   if (!available) return null
 
@@ -89,8 +90,15 @@ export function TextEstimate({ onResult }: Props) {
         disabled={busy || !text.trim()}
         onClick={() => void estimate()}
       >
-        {busy ? 'Working it out…' : 'Fill in the macros'}
+        {busy ? `Working it out… ${elapsed}s` : 'Fill in the macros'}
       </button>
+
+      {busy && elapsed > 20 ? (
+        <div className="sub" style={{ marginTop: 6 }}>
+          Still going — a cold model can take a while. It will wait up to five
+          minutes before giving up.
+        </div>
+      ) : null}
 
       <div className="sub" style={{ marginTop: 8 }}>
         Include the numbers if you have them and they are copied across exactly.

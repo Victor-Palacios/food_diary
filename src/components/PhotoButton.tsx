@@ -6,7 +6,7 @@ import {
   type ExtractKind,
   type ExtractResult,
 } from '../lib/extract'
-import { useExtractionAvailable } from '../lib/useExtraction'
+import { useElapsedSeconds, useExtractionAvailable } from '../lib/useExtraction'
 
 interface Props {
   kind: Extract<ExtractKind, 'label' | 'plate'>
@@ -27,6 +27,7 @@ export function PhotoButton({ kind, onResult }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notes, setNotes] = useState<string | null>(null)
+  const elapsed = useElapsedSeconds(busy)
 
   if (!available) return null
 
@@ -61,7 +62,7 @@ export function PhotoButton({ kind, onResult }: Props) {
       >
         <IconCamera />
         {busy
-          ? 'Reading the photo…'
+          ? `Reading the photo… ${elapsed}s`
           : kind === 'label'
             ? 'Scan a nutrition label'
             : 'Estimate from a photo'}

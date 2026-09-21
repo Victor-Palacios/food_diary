@@ -19,6 +19,31 @@ function probe(): Promise<boolean> {
   return cached
 }
 
+/**
+ * Seconds since `running` became true, for the wait indicator.
+ *
+ * A model call can legitimately take a minute or more, and a button that
+ * just says "working" for that long is indistinguishable from a hung one.
+ */
+export function useElapsedSeconds(running: boolean): number {
+  const [seconds, setSeconds] = useState(0)
+
+  useEffect(() => {
+    if (!running) {
+      setSeconds(0)
+      return
+    }
+    const startedAt = Date.now()
+    const id = setInterval(
+      () => setSeconds(Math.round((Date.now() - startedAt) / 1000)),
+      1000,
+    )
+    return () => clearInterval(id)
+  }, [running])
+
+  return seconds
+}
+
 export function useExtractionAvailable(): boolean {
   const [available, setAvailable] = useState(false)
 

@@ -53,10 +53,15 @@ const DEFAULT_TEXT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct'
 
 /**
  * Total wall-clock budget for the upstream work, shared across a retry.
- * Cloudflare's edge abandons the request near 100s and returns a bare 524,
- * so finish before that and return something the user can act on.
+ *
+ * This can exceed Cloudflare's ~100s edge timeout only because the reply is
+ * streamed with heartbeats (see streamWhileWorking); a request that sits
+ * silent gets killed at 100s no matter what this says.
  */
-const TOTAL_BUDGET_MS = 85_000
+const TOTAL_BUDGET_MS = 300_000
+
+/** Frequent enough that no intermediary sees an idle connection. */
+const HEARTBEAT_MS = 10_000
 
 /** No point starting a call that cannot plausibly finish. */
 const MIN_ATTEMPT_MS = 8_000
@@ -264,8 +269,29 @@ export async function handleExtract(
   // instructions more reliably than the vision variant does.
   const model = kind === 'text' ? env.NVIDIA_TEXT_MODEL || DEFAULT_TEXT_MODEL : visionModel
 
+  // Everything above this point fails fast and gets an ordinary status code.
+  // From here the model call can take minutes, so the reply is streamed --
+  // see streamWhileWorking for why.
+  return streamWhileWorking(() =>
+    runExtraction(env, baseUrl, model, visionModel, messageContent, kind),
+  )
+}
+
+/** The single line the client ultimately reads off the stream. */
+type Final =
+  | { ok: true; result: Record<string, unknown> }
+  | { ok: false; error: string; detail?: string }
+
+async function runExtraction(
+  env: Env,
+  baseUrl: string,
+  model: string,
+  visionModel: string,
+  messageContent: Array<Record<string, unknown>>,
+  kind: string,
+): Promise<Final> {
   // One shared deadline rather than a per-call timeout, so a fast failure
-  // followed by a retry cannot add up to more than the edge will wait for.
+  // followed by a retry cannot add up to more than the whole budget.
   const deadline = Date.now() + TOTAL_BUDGET_MS
 
   let result = await callModel(env, baseUrl, model, messageContent, deadline, kind)
@@ -287,7 +313,7 @@ export async function handleExtract(
     result = await callModel(env, baseUrl, visionModel, messageContent, deadline, kind)
   }
 
-  if (result.error) return result.error
+  if (result.failure) return { ok: false, ...result.failure }
 
   const parsed = parseJsonObject(result.content ?? '')
   if (!parsed) {
@@ -297,22 +323,79 @@ export async function handleExtract(
       `Unparseable ${kind} reply from ${model} ` +
         `(${result.content?.length ?? 0} chars): ${(result.content ?? '').slice(0, 1500)}`,
     )
-    return json(
-      {
-        error:
-          kind === 'text'
-            ? 'Could not read a result from that description. Enter it by hand.'
-            : 'Could not read a result from that photo. Enter it by hand.',
-        // Echoed back so a failure can be diagnosed from the phone rather
-        // than by digging through Worker logs. It is the user's own content
-        // coming back, so nothing is disclosed that they did not send.
-        detail: (result.content ?? '').slice(0, 300),
-      },
-      422,
-    )
+    return {
+      ok: false,
+      error:
+        kind === 'text'
+          ? 'Could not read a result from that description. Enter it by hand.'
+          : 'Could not read a result from that photo. Enter it by hand.',
+      // Echoed back so a failure can be diagnosed from the phone rather
+      // than by digging through Worker logs. It is the user's own content
+      // coming back, so nothing is disclosed that they did not send.
+      detail: (result.content ?? '').slice(0, 300),
+    }
   }
 
-  return json(parsed)
+  return { ok: true, result: parsed }
+}
+
+/**
+ * Streams the reply instead of awaiting it and answering in one go.
+ *
+ * Cloudflare's edge abandons a request that has produced no bytes for around
+ * 100 seconds and returns a bare 524 -- so simply raising the Worker's own
+ * timeout past that buys nothing, it only replaces a useful error message
+ * with an opaque one. A response that keeps emitting bytes is not idle, so
+ * heartbeats let the model take as long as the budget allows.
+ *
+ * The format is newline-delimited: lines beginning with ':' are heartbeats to
+ * ignore, and the last line is the result. Because the status code is sent
+ * with the headers, long before the outcome is known, it is always 200 and
+ * failures are carried in the body as { ok: false }.
+ */
+function streamWhileWorking(work: () => Promise<Final>): Response {
+  const encoder = new TextEncoder()
+
+  const body = new ReadableStream({
+    async start(controller) {
+      const beat = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(':\n'))
+        } catch {
+          // Client hung up; the interval is cleared below.
+        }
+      }, HEARTBEAT_MS)
+
+      // Send one immediately so the response headers flush right away.
+      controller.enqueue(encoder.encode(':\n'))
+
+      let final: Final
+      try {
+        final = await work()
+      } catch (e) {
+        console.error(`Extraction threw: ${errorText(e)}`)
+        final = { ok: false, error: `Extraction failed: ${errorText(e)}` }
+      }
+
+      clearInterval(beat)
+      try {
+        controller.enqueue(encoder.encode(`${JSON.stringify(final)}\n`))
+      } catch {
+        // Nothing to do if the client has gone.
+      }
+      controller.close()
+    },
+  })
+
+  return new Response(body, {
+    headers: {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-store',
+      // Stop any intermediary buffering the heartbeats, which would defeat
+      // the entire point of sending them.
+      'x-accel-buffering': 'no',
+    },
+  })
 }
 
 interface CallResult {
@@ -320,7 +403,7 @@ interface CallResult {
   /** Set when the model id itself is gone, so the caller can try another. */
   retired?: boolean
   status?: number
-  error?: Response
+  failure?: { error: string; detail?: string }
 }
 
 async function callModel(
@@ -367,23 +450,17 @@ async function callModel(
 
     if (timedOut) {
       return {
-        error: json(
-          {
-            // Name the model: if this keeps happening it is a model choice
-            // problem, not a transient one, and the var is one edit away.
-            error:
-              `"${model}" did not answer within ${Math.round(elapsed / 1000)}s. ` +
-              `It may be queued or cold — try again, or type the numbers in by hand.`,
-          },
-          504,
-        ),
+        failure: {
+          // Name the model: if this keeps happening it is a model choice
+          // problem, not a transient one, and the var is one edit away.
+          error:
+            `"${model}" did not answer within ${Math.round(elapsed / 1000)}s. ` +
+            `It may be queued or cold — try again, or type the numbers in by hand.`,
+        },
       }
     }
     return {
-      error: json(
-        { error: `Could not reach the extraction service: ${errorText(e)}` },
-        502,
-      ),
+      failure: { error: `Could not reach the extraction service: ${errorText(e)}` },
     }
   }
 
@@ -401,32 +478,25 @@ async function callModel(
       return {
         retired: true,
         status: upstream.status,
-        error: json(
-          {
-            error:
-              `The model "${model}" is no longer available (${upstream.status}). ` +
-              `Point NVIDIA_${kind === 'text' ? 'TEXT_' : ''}MODEL at a current one ` +
-              `from https://integrate.api.nvidia.com/v1/models`,
-          },
-          502,
-        ),
+        failure: {
+          error:
+            `The model "${model}" is no longer available (${upstream.status}). ` +
+            `Point NVIDIA_${kind === 'text' ? 'TEXT_' : ''}MODEL at a current one ` +
+            `from https://integrate.api.nvidia.com/v1/models`,
+        },
       }
     }
 
     if (upstream.status === 401 || upstream.status === 403) {
       return {
-        error: json(
-          { error: 'The NVIDIA API key was rejected. Check or rotate NVIDIA_API_KEY.' },
-          502,
-        ),
+        failure: {
+          error: 'The NVIDIA API key was rejected. Check or rotate NVIDIA_API_KEY.',
+        },
       }
     }
 
     return {
-      error: json(
-        { error: `The extraction service returned ${upstream.status}.` },
-        upstream.status === 429 ? 429 : 502,
-      ),
+      failure: { error: `The extraction service returned ${upstream.status}.` },
     }
   }
 
@@ -437,7 +507,7 @@ async function callModel(
   const content = payload?.choices?.[0]?.message?.content
   if (typeof content !== 'string' || !content.trim()) {
     return {
-      error: json({ error: 'The extraction service returned nothing usable.' }, 502),
+      failure: { error: 'The extraction service returned nothing usable.' },
     }
   }
 
