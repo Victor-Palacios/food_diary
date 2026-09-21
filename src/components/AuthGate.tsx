@@ -99,6 +99,12 @@ function SignIn() {
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
         </div>
+
+        {/* Visible before sign-in, so a stale installed copy can be spotted
+            without getting into the app first. */}
+        <div className="auth-sub" style={{ marginTop: 14, fontSize: 11.5 }}>
+          Build {__BUILD_STAMP__}
+        </div>
       </form>
     </div>
   )

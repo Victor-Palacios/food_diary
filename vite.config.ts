@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
@@ -26,12 +26,35 @@ function buildStamp(): string {
   return `${sha.slice(0, 7)} · ${new Date().toISOString().slice(0, 16).replace('T', ' ')}Z`
 }
 
+const STAMP = buildStamp()
+
+/**
+ * Writes the build stamp to /version.json as well as into the bundle.
+ *
+ * A URL anyone can curl answers "what is actually deployed right now"
+ * without opening the app, signing in, or trusting a screenshot. Deliberately
+ * not precached -- a cached version file would defeat its own purpose.
+ */
+function versionFile(): Plugin {
+  return {
+    name: 'emit-version-json',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: JSON.stringify({ build: STAMP }, null, 2) + '\n',
+      })
+    },
+  }
+}
+
 export default defineConfig({
   define: {
-    __BUILD_STAMP__: JSON.stringify(buildStamp()),
+    __BUILD_STAMP__: JSON.stringify(STAMP),
   },
   plugins: [
     react(),
+    versionFile(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['icons/apple-touch-icon.png', 'icons/favicon.png'],
