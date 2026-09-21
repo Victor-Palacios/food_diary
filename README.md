@@ -24,7 +24,7 @@ multiplier preset → `Save`.
 - [Cloudflare Workers deploy](#cloudflare-workers-deploy)
 - [Secrets](#secrets)
 - [Local development](#local-development)
-- [Phase 2: photo extraction](#phase-2-photo-extraction)
+- [Phase 2: photo and text extraction](#phase-2-photo-and-text-extraction)
 - [Data model notes](#data-model-notes)
 - [Project layout](#project-layout)
 
@@ -324,23 +324,33 @@ DST and month boundaries, and multiplier parsing and rendering.
 
 ---
 
-## Phase 2: photo extraction
+## Phase 2: photo and text extraction
 
 Optional, and shipped in a state where an unconfigured deployment is a fully
 supported one. With no `NVIDIA_API_KEY` set, `/api/extract` returns 501, the
 client hides the camera buttons entirely, and Phase 1 behaves exactly as before.
 
-Two separate features, not one "upload a picture" flow:
+Three separate features, not one "upload a picture" flow:
 
 - **Label OCR** (`kind: "label"`), on the food form. Reads a printed nutrition
   panel and prefills a new library row. Accurate, because it is reading text.
 - **Plate estimation** (`kind: "plate"`), on the one-off entry form. Estimates
-  an unlabelled plate. Every result is written with `source = 'photo'` and
+  an unlabelled plate from a photo. Written with `source = 'photo'` and
   `is_estimate = true`, and the UI labels it an estimate.
+- **Text estimation** (`kind: "text"`), also on the one-off entry form, and in
+  practice the most useful of the three. Type "chicken burrito bowl with rice
+  and guac" and the seven fields fill in. Same accuracy caveat as a plate and
+  the same `is_estimate = true`, but it needs no camera and covers the
+  restaurant case, which is the common unlabelled meal. Written with
+  `source = 'manual'` — `'photo'` is reserved for results that actually came
+  from a camera, so provenance stays honest.
 
-Both are **review-before-save**: the model prefills a form, the user confirms
-every value. Nothing is ever written to the log directly from a photo — the
-Worker has no database access to do it with even if it wanted to.
+All three are **review-before-save**: the model prefills a form, the user
+confirms every value. Nothing is ever written to the log directly — the Worker
+has no database access to do it with even if it wanted to.
+
+The typed description is sent as its own message part rather than spliced into
+the prompt, so nothing the user types is read as further instructions.
 
 Photos are downscaled to 1280px and JPEG-compressed in the browser before
 upload, which also strips EXIF.
@@ -410,7 +420,7 @@ src/
     dates.ts               Calendar days in the fixed timezone
     stats.ts               Mean/median; the unlogged-days rule
     api.ts                 All reads and writes
-    photo.ts               Phase 2 client: compress, post, normalize
+    extract.ts             Phase 2 client: compress, post, normalize
     AppData.tsx            Shared foods + targets
     logic.test.ts          Unit tests
   components/              AuthGate, Sheet, MultiplierPicker, forms, icons

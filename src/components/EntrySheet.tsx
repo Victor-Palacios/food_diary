@@ -9,13 +9,14 @@ import {
   type NutritionDraft,
 } from './NutritionFields'
 import { PhotoButton } from './PhotoButton'
+import { TextEstimate } from './TextEstimate'
 import { IconBack, IconSearch, IconTrash } from './Icons'
 import * as api from '../lib/api'
 import { scale } from '../lib/stats'
 import { formatMultiplier, parseNumber } from '../lib/format'
 import { formatRelative, type IsoDate } from '../lib/dates'
 import { METRICS } from '../lib/types'
-import type { FoodWithUsage, LogEntry, Nutrition, Snapshot } from '../lib/types'
+import type { FoodSource, FoodWithUsage, LogEntry, Nutrition, Snapshot } from '../lib/types'
 
 type Mode = 'pick' | 'quantity' | 'oneoff' | 'edit'
 
@@ -50,6 +51,9 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
   const [oneOffServing, setOneOffServing] = useState('1 serving')
   const [alsoSave, setAlsoSave] = useState(false)
   const [oneOffEstimate, setOneOffEstimate] = useState(false)
+  // Tracked separately from the estimate flag so provenance stays honest:
+  // 'photo' only when a camera was actually involved.
+  const [oneOffSource, setOneOffSource] = useState<FoodSource>('manual')
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -142,7 +146,7 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
           brand: null,
           serving_label: oneOffServing.trim() || '1 serving',
           serving_grams: null,
-          source: oneOffEstimate ? 'photo' : 'manual',
+          source: oneOffSource,
           is_estimate: oneOffEstimate,
           ...perServing,
         })
@@ -154,7 +158,7 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
         food_id: foodId,
         snapshot: {
           label: name,
-          source: oneOffEstimate ? 'photo' : 'manual',
+          source: oneOffSource,
           is_estimate: oneOffEstimate,
           ...perServing,
         },
@@ -218,7 +222,7 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
               setMultiplier(1)
             }}
           >
-            Log something not in the library
+            Describe something new
           </button>
         }
       >
@@ -354,6 +358,18 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
           </button>
         }
       >
+        {/* Fastest path for unlabelled food: type it, let the model do the
+            arithmetic, then correct whatever looks wrong. */}
+        <TextEstimate
+          onResult={(result) => {
+            if (result.name) setOneOffName(result.name)
+            setOneOffDraft(draftFromNutrition(result.nutrition))
+            setOneOffServing(result.serving_label)
+            setOneOffEstimate(true)
+            setOneOffSource('manual')
+          }}
+        />
+
         <PhotoButton
           kind="plate"
           onResult={(result) => {
@@ -361,6 +377,7 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
             setOneOffDraft(draftFromNutrition(result.nutrition))
             setOneOffServing(result.serving_label)
             setOneOffEstimate(true)
+            setOneOffSource('photo')
           }}
         />
 

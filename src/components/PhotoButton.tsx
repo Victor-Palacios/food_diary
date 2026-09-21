@@ -5,11 +5,11 @@ import {
   extractFromPhoto,
   type ExtractKind,
   type ExtractResult,
-} from '../lib/photo'
+} from '../lib/extract'
 import { useExtractionAvailable } from '../lib/useExtraction'
 
 interface Props {
-  kind: ExtractKind
+  kind: Extract<ExtractKind, 'label' | 'plate'>
   onResult: (result: ExtractResult) => void
 }
 

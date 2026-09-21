@@ -1,14 +1,15 @@
 import type { Nutrition } from './types'
 
 /**
- * Phase 2 client half. The API key lives server-side in the Cloudflare
- * Function -- this module only ever talks to our own /api/extract.
+ * Phase 2 client half. The API key lives server-side in the Worker -- this
+ * module only ever talks to our own /api/extract, so the credential never
+ * reaches the browser.
  *
- * Both paths are review-before-save: the model prefills a form and the user
+ * Every path is review-before-save: the model prefills a form and the user
  * confirms. Nothing here writes to the log.
  */
 
-export type ExtractKind = 'label' | 'plate'
+export type ExtractKind = 'label' | 'plate' | 'text'
 
 export interface ExtractResult {
   name: string
@@ -46,20 +47,32 @@ export async function compressImage(file: File, maxEdge = 1280): Promise<string>
 }
 
 export async function extractFromPhoto(
-  kind: ExtractKind,
+  kind: 'label' | 'plate',
   file: File,
 ): Promise<ExtractResult> {
   const image = await compressImage(file)
+  return post({ kind, image })
+}
 
+/**
+ * Estimate from a written description -- "2 eggs, toast with butter, banana".
+ * Same accuracy caveat as a plate photo, and the same estimate flag, but it
+ * covers the restaurant case where there is nothing to photograph.
+ */
+export async function extractFromText(text: string): Promise<ExtractResult> {
+  return post({ kind: 'text', text: text.trim() })
+}
+
+async function post(request: Record<string, unknown>): Promise<ExtractResult> {
   const response = await fetch('/api/extract', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ kind, image }),
+    body: JSON.stringify(request),
   })
 
   if (response.status === 501) {
     throw new ExtractUnavailable(
-      'Photo extraction is not configured on this deployment.',
+      'AI extraction is not configured on this deployment.',
     )
   }
 

@@ -709,6 +709,22 @@ textarea {
    Photo capture (Phase 2)
    -------------------------------------------------------------------------- */
 
+/* The describe-it-in-words estimator. Given visual weight because for
+   unlabelled food it is the fastest route to a logged entry by a wide
+   margin -- typing one sentence beats filling seven numeric fields. */
+.estimator {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.estimator textarea {
+  min-height: 60px;
+  background: var(--surface);
+}
+
 .photo {
   margin-bottom: 14px;
 }

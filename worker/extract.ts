@@ -1,23 +1,28 @@
 import { json, type Env } from './shared'
 
 /**
- * Phase 2 -- photo extraction via the NVIDIA API.
+ * Phase 2 -- nutrition extraction via the NVIDIA API.
  *
- * Two genuinely different features share this route, because they share the
+ * Three genuinely different features share this route, because they share the
  * plumbing and nothing else:
  *
  *   7a. label  -- read a printed nutrition panel. This is OCR over text, so
  *                 accuracy is high and it is the useful half.
- *   7b. plate  -- estimate an unlabelled plate of food. Accuracy is poor and
- *                 unknowable per meal, so every result is marked as an
- *                 estimate before it goes anywhere near the log.
+ *   7b. plate  -- estimate an unlabelled plate of food from a photo. Accuracy
+ *                 is poor and unknowable per meal, so every result is marked
+ *                 as an estimate before it goes anywhere near the log.
+ *   7c. text   -- estimate from a written description ("2 eggs and toast").
+ *                 Same accuracy caveat as a plate, and the same estimate
+ *                 flag, but it needs no camera and covers the restaurant
+ *                 case, which is the most common unlabelled meal.
  *
- * Both are review-before-save. This endpoint returns a draft; the client
+ * All three are review-before-save. This endpoint returns a draft; the client
  * prefills a form with it and the user confirms. Nothing is ever written to
  * the log from here -- this Worker has no database credentials at all.
  */
 
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024
+const MAX_TEXT_CHARS = 600
 
 const LABEL_PROMPT = `You are reading a printed nutrition facts panel from a photograph.
 
@@ -75,9 +80,41 @@ Rules:
 - Say in notes what you were unsure about. The user reviews every value before
   it is saved.`
 
+const TEXT_PROMPT = `You are estimating the nutrition of food from a short written
+description typed by someone logging what they ate. There is no label and no
+scale reading. This is an estimate and it will be recorded as one.
+
+The description may list several items in one meal. Combine them into ONE
+total for the whole meal as described.
+
+Return ONLY a JSON object, no prose, no markdown fence:
+{
+  "name": "short summary of the meal, e.g. \\"2 eggs, toast with butter, banana\\"",
+  "serving_label": "the portion you estimated, e.g. \\"1 meal as described\\"",
+  "nutrition": {
+    "calories": number,
+    "protein_g": number,
+    "carbs_g": number,
+    "fat_total_g": number,
+    "fat_sat_g": number,
+    "fat_trans_g": number,
+    "fiber_g": number
+  },
+  "notes": "what you assumed about portion sizes, brands and preparation"
+}
+
+Rules:
+- Where the description gives a quantity or a brand, use it exactly.
+- Where it does not, assume one typical serving and SAY SO in notes.
+- If a named restaurant dish has published nutrition data, use it and say so.
+- Numbers only, no units, no ranges. Give your single best estimate.
+- carbs_g is TOTAL carbohydrate, not net carbs.
+- The user reviews and corrects every value before it is saved.`
+
 interface ExtractRequest {
   kind?: unknown
   image?: unknown
+  text?: unknown
 }
 
 export async function handleExtract(
@@ -105,18 +142,56 @@ export async function handleExtract(
     return json({ error: 'Expected a JSON body.' }, 400)
   }
 
-  const kind = body.kind === 'label' || body.kind === 'plate' ? body.kind : null
+  const kind =
+    body.kind === 'label' || body.kind === 'plate' || body.kind === 'text'
+      ? body.kind
+      : null
   if (!kind) {
-    return json({ error: 'kind must be "label" or "plate".' }, 400)
+    return json({ error: 'kind must be "label", "plate" or "text".' }, 400)
   }
 
-  const image = typeof body.image === 'string' ? body.image : ''
-  if (!image.startsWith('data:image/')) {
-    return json({ error: 'image must be a data: URL.' }, 400)
+  // Text needs no image; the photo kinds need no text. Validate only what the
+  // chosen kind actually uses, so a malformed field of the other sort cannot
+  // reject an otherwise fine request.
+  let description = ''
+  let image = ''
+
+  if (kind === 'text') {
+    description = typeof body.text === 'string' ? body.text.trim() : ''
+    if (!description) {
+      return json({ error: 'Describe what you ate.' }, 400)
+    }
+    if (description.length > MAX_TEXT_CHARS) {
+      return json(
+        { error: `Keep the description under ${MAX_TEXT_CHARS} characters.` },
+        413,
+      )
+    }
+  } else {
+    image = typeof body.image === 'string' ? body.image : ''
+    if (!image.startsWith('data:image/')) {
+      return json({ error: 'image must be a data: URL.' }, 400)
+    }
+    if (image.length > MAX_IMAGE_BYTES) {
+      return json({ error: 'That photo is too large. Try again with less zoom.' }, 413)
+    }
   }
-  if (image.length > MAX_IMAGE_BYTES) {
-    return json({ error: 'That photo is too large. Try again with less zoom.' }, 413)
-  }
+
+  const prompt =
+    kind === 'label' ? LABEL_PROMPT : kind === 'plate' ? PLATE_PROMPT : TEXT_PROMPT
+
+  // The description is passed as its own message part rather than spliced into
+  // the prompt, so nothing a user types can be read as further instructions.
+  const messageContent: Array<Record<string, unknown>> =
+    kind === 'text'
+      ? [
+          { type: 'text', text: prompt },
+          { type: 'text', text: `Description of the meal:\n${description}` },
+        ]
+      : [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: image } },
+        ]
 
   const baseUrl = env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1'
   const model = env.NVIDIA_MODEL || 'meta/llama-3.2-90b-vision-instruct'
@@ -132,15 +207,7 @@ export async function handleExtract(
       },
       body: JSON.stringify({
         model,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: kind === 'label' ? LABEL_PROMPT : PLATE_PROMPT },
-              { type: 'image_url', image_url: { url: image } },
-            ],
-          },
-        ],
+        messages: [{ role: 'user', content: messageContent }],
         // Low temperature: this is a transcription task for labels and a
         // point estimate for plates. Neither wants creativity.
         temperature: 0.1,
