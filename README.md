@@ -19,6 +19,7 @@ multiplier preset → `Save`.
 
 - [Stack](#stack)
 - [Auth](#auth-supabase-auth-single-seeded-account)
+- [Installable, not offline](#installable-not-offline)
 - [Supabase setup](#supabase-setup)
 - [Row Level Security](#row-level-security)
 - [Cloudflare Workers deploy](#cloudflare-workers-deploy)
@@ -39,7 +40,7 @@ multiplier preset → `Save`.
 | Client | Vite + React + TypeScript, no UI framework |
 | Data | Supabase (Postgres + RLS) |
 | Auth | Supabase Auth, one seeded account |
-| PWA | `vite-plugin-pwa`, installable, app shell precached |
+| PWA | `vite-plugin-pwa` manifest only — installable, **no service worker** |
 
 One Worker serves both the SPA and the API. Static assets in `dist/` are matched
 first; `run_worker_first: ["/api/*"]` carves out the API routes so they reach
@@ -88,6 +89,62 @@ logout use **Sign out user** on the same menu afterward.
 
 There is no in-app password change on purpose: it would be UI that exists for
 one event a year and another surface to get wrong.
+
+---
+
+## Installable, not offline
+
+The app ships a **web app manifest and no service worker**. Those are two
+different things, and conflating them cost real debugging time.
+
+*Installable* is the manifest: a home-screen icon, `display: standalone`, no
+browser chrome. That is what the spec asked for.
+
+*Offline-capable* means a service worker precaching an app shell. The spec put
+offline-first sync explicitly out of scope, and a precached shell bought
+nothing the product needed — you are online when you log a meal — while
+costing something it did need.
+
+**What it cost.** A service worker is not a cache. It is application
+JavaScript that installs itself between the page and the network and answers
+requests from its own storage, so `cache-control` has no authority over it and
+pressing reload does not bypass it. It updates only when the browser re-fetches
+`sw.js`, which happens on a navigation and at most about daily — and an
+installed iOS app on the home screen never navigates. It suspends and resumes.
+There is no reload button in standalone display mode either.
+
+So a phone could run week-old JavaScript against a current API for days, and
+did. That is not a cosmetic problem. One stale client called `.json()` on a
+newline-delimited stream, the parse threw, `null` normalised into an all-zeros
+form, and the response status was 200 — it presented as a model failure. Three
+rounds of "the fix did not work" were this.
+
+**Why nothing is needed in its place.** Without a worker the ordinary web rules
+apply, and they are sufficient:
+
+- Asset filenames are content-hashed (`index-D35wdByx.js`). A new build gets a
+  new name, so a stale copy is *unreachable* rather than wrong — nothing asks
+  for it.
+- `index.html` — the one file that cannot be hashed, because it names the
+  others — is served `cache-control: public, max-age=0, must-revalidate`, so
+  the browser checks it every time. Fresh HTML names the fresh bundle.
+
+Staleness stops being a failure mode to detect and becomes structurally
+impossible.
+
+**Two things remain, on purpose.**
+
+`selfDestroying: true` in `vite.config.ts` still emits an `sw.js`, whose only
+job is to unregister itself and delete its caches. Dropping the file from the
+build would *not* remove a worker from a phone that already installed one —
+that worker keeps serving its own precached shell indefinitely. This replaces
+it and cleans up. The flag can go once no install predates that change.
+
+`src/components/UpdateBanner.tsx` stays as a safety net. It compares the build
+stamp compiled into the running bundle against `/version.json`, fetched
+`no-store`, and re-checks on `visibilitychange`. A single-page app that has
+been left open for days never refetches its HTML, so this is still the one case
+the rules above do not cover.
 
 ---
 

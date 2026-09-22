@@ -6,9 +6,9 @@ import { VitePWA } from 'vite-plugin-pwa'
 /**
  * A visible build stamp, shown in Settings.
  *
- * An installed PWA can keep running old JavaScript long after a deploy, and
- * "which version am I actually looking at" is otherwise unanswerable from a
- * phone -- which turns every bug report into guesswork.
+ * "Which version am I actually looking at" is otherwise unanswerable from a
+ * phone, which turns every bug report into guesswork. That mattered most when
+ * this app had a service worker; it is still worth the two lines.
  */
 function buildStamp(): string {
   const sha =
@@ -32,8 +32,8 @@ const STAMP = buildStamp()
  * Writes the build stamp to /version.json as well as into the bundle.
  *
  * A URL anyone can curl answers "what is actually deployed right now"
- * without opening the app, signing in, or trusting a screenshot. Deliberately
- * not precached -- a cached version file would defeat its own purpose.
+ * without opening the app, signing in, or trusting a screenshot. Fetched
+ * no-store by UpdateBanner, since a cached copy would defeat its purpose.
  */
 function versionFile(): Plugin {
   return {
@@ -56,7 +56,38 @@ export default defineConfig({
     react(),
     versionFile(),
     VitePWA({
-      registerType: 'autoUpdate',
+      /**
+       * No service worker. This app is installable, not offline-capable.
+       *
+       * "Installable" is the manifest below: home-screen icon, standalone
+       * display, no browser chrome. An offline app shell is a separate thing,
+       * and shipping one was a mistake here -- offline-first was explicitly
+       * out of scope, and the precached shell bought nothing the product
+       * needed while costing something it did need.
+       *
+       * What it cost: a service worker answers navigations from its own
+       * storage without asking the network, so `cache-control` does not
+       * govern it and a reload does not bypass it. On an installed iOS PWA
+       * the browser only re-checks the worker script on a navigation, and a
+       * home-screen app never navigates -- it suspends and resumes. So a
+       * phone could run week-old JavaScript against a current API for days.
+       * That was not a cosmetic problem: an old client called .json() on a
+       * newline-delimited stream, the parse threw, and null normalised into
+       * an all-zeros form with a 200 status. It looked like a model failure.
+       *
+       * Without a worker the ordinary web rules apply, and they are enough:
+       * asset filenames are content-hashed, so a stale copy is unreachable
+       * rather than wrong, and index.html is served must-revalidate, so the
+       * one unhashable file is checked every time. Staleness stops being a
+       * failure mode instead of being something the app has to detect.
+       *
+       * `selfDestroying` still emits a worker, whose only job is to unregister
+       * itself and delete its caches. That is deliberate: dropping sw.js from
+       * the build would not remove it from a phone that already installed one
+       * -- that worker keeps serving its precached shell. This replaces it and
+       * cleans up. Removable once no install predates this build.
+       */
+      selfDestroying: true,
       includeAssets: ['icons/apple-touch-icon.png', 'icons/favicon.png'],
       manifest: {
         name: 'Food Log',
@@ -78,21 +109,6 @@ export default defineConfig({
             purpose: 'maskable',
           },
         ],
-      },
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
-        // Take over as soon as a new build is fetched rather than waiting for
-        // every tab to close. An installed PWA is rarely "closed", so without
-        // these a deploy can sit unused for days -- and a client running
-        // against a newer API is how silent breakage happens.
-        skipWaiting: true,
-        clientsClaim: true,
-        cleanupOutdatedCaches: true,
-        // The app shell is cached so a cold open on a bad connection still
-        // paints instantly. Supabase and the extraction endpoint are never
-        // cached -- stale nutrition data is worse than no data.
-        navigateFallbackDenylist: [/^\/api\//],
-        runtimeCaching: [],
       },
       devOptions: { enabled: false },
     }),

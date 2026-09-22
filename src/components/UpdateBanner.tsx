@@ -3,15 +3,19 @@ import { useEffect, useState } from 'react'
 /**
  * Tells you when the running code is older than what is deployed.
  *
- * An installed PWA holds its bundle through reloads, and iOS is especially
- * reluctant to let go. That produced several rounds of "the fix did not
- * work" when the fix was live and the phone was simply running last week's
- * JavaScript against a newer API. The app can see this for itself: compare
- * the build compiled into this bundle against /version.json, which is
- * served fresh.
+ * This was written for the service worker era, when an installed PWA held its
+ * bundle through reloads and a phone could run last week's JavaScript against
+ * a newer API -- which produced several rounds of "the fix did not work" when
+ * the fix was live. There is no service worker now, so index.html revalidates
+ * and a reload is genuinely a reload.
  *
- * Reloading is not enough on its own, so the button unregisters the service
- * worker and clears its caches first.
+ * It stays as a safety net for the one case that still gets through: a tab
+ * left open for days never refetches its HTML, so a long-lived session can
+ * still drift behind a deploy. Cheap insurance, and it also heals any install
+ * still carrying the old worker.
+ *
+ * The button clears both anyway, because a reload alone would not have been
+ * enough in that case and this has to work on the installs it is rescuing.
  */
 export function UpdateBanner() {
   const [stale, setStale] = useState<string | null>(null)
