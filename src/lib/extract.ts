@@ -29,6 +29,18 @@ export interface ExtractResult {
 export class ExtractUnavailable extends Error {}
 
 /**
+ * An error this module raised on purpose, having successfully talked to the
+ * server -- as opposed to the transport failing underneath us.
+ *
+ * The distinction decides whether to retry without the stream, and it has to
+ * be carried by the type rather than sniffed out of the message. Sniffing is
+ * what broke it: "The connection closed before a result arrived" contains
+ * the word "connection", so it was read as a dropped socket, retried, and
+ * the retry's own less accurate failure replaced the real one.
+ */
+class ExtractFailure extends Error {}
+
+/**
  * NVIDIA's OpenAI-compatible vision endpoints only accept an inline base64
  * image below roughly 180 KB; past that they expect a separate asset upload.
  * Going over does not fail cleanly -- the request can simply hang until
@@ -114,12 +126,24 @@ async function post(request: Record<string, unknown>): Promise<ExtractResult> {
     // the stream gives up the five-minute ceiling but usually succeeds -- and
     // since slow calls are now hedged server-side, the buffered budget is
     // almost always enough.
-    if (e instanceof ExtractUnavailable || !isNetworkFailure(e)) throw e
+    if (
+      e instanceof ExtractUnavailable ||
+      e instanceof ExtractFailure ||
+      !isNetworkFailure(e)
+    ) {
+      throw e
+    }
     return postBuffered(request)
   }
 }
 
-/** A transport failure, as opposed to the server reporting a problem. */
+/**
+ * A transport failure, as opposed to the server reporting a problem.
+ *
+ * Only errors thrown by fetch or by reading its body reach this -- anything
+ * this module raised itself is an ExtractFailure and was rejected above, so
+ * the message patterns here cannot match our own wording by accident.
+ */
 function isNetworkFailure(e: unknown): boolean {
   if (!(e instanceof Error)) return false
   return (
@@ -138,7 +162,7 @@ async function postBuffered(request: Record<string, unknown>): Promise<ExtractRe
     throw new ExtractUnavailable('AI extraction is not configured on this deployment.')
   }
   const payload: unknown = await response.json().catch(() => null)
-  if (!response.ok) throw new Error(errorFrom(payload, response.status))
+  if (!response.ok) throw new ExtractFailure(errorFrom(payload, response.status))
   return normalize(payload)
 }
 
@@ -174,23 +198,23 @@ async function postStreaming(request: Record<string, unknown>): Promise<ExtractR
       // Falling through with null here is what produced a silent all-zero
       // form once: an unreadable body with a 200 status normalised into
       // nothing at all. An unreadable reply is a failure, not an empty one.
-      throw new Error(
+      throw new ExtractFailure(
         `The server sent a reply this app could not read. ` +
           `Close and reopen the app to pick up the latest version.` +
           (text ? `\n\nIt said: ${text.slice(0, 200)}` : ''),
       )
     }
-    if (!response.ok) throw new Error(errorFrom(payload, response.status))
+    if (!response.ok) throw new ExtractFailure(errorFrom(payload, response.status))
     return normalize(payload)
   }
 
   const final = await readFinalLine(response)
   if (!final) {
-    throw new Error(
+    throw new ExtractFailure(
       'The connection closed before a result arrived. Try again.',
     )
   }
-  if (final.ok !== true) throw new Error(errorFrom(final, response.status))
+  if (final.ok !== true) throw new ExtractFailure(errorFrom(final, response.status))
   return normalize(final.result)
 }
 
@@ -291,7 +315,7 @@ function normalize(payload: unknown): ExtractResult {
   const name = typeof obj.name === 'string' ? obj.name : ''
   const everythingZero = Object.values(nutrition).every((v) => !v)
   if (!name.trim() && everythingZero) {
-    throw new Error(
+    throw new ExtractFailure(
       'The model returned nothing usable for that. Try rewording it, or enter the values by hand.',
     )
   }

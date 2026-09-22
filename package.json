@@ -6,12 +6,14 @@
   "scripts": {
     "dev": "vite",
     "dev:worker": "npm run build && wrangler dev",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vitest run && vite build",
     "deploy": "npm run build && wrangler deploy",
     "test": "vitest run",
     "typecheck": "tsc -b",
     "cf-typegen": "wrangler types",
-    "icons": "node scripts/generate-icons.mjs"
+    "icons": "node scripts/generate-icons.mjs",
+    "test:watch": "vitest",
+    "test:sw": "node scripts/sw-cleanup-test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",

@@ -407,9 +407,11 @@ food into the block you are about to compare against a scan.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Vite dev server with HMR. Does not run the Worker. |
-| `npm test` | Vitest — the aggregation, date and formatting logic |
+| `npm test` | Vitest — the whole suite |
+| `npm run test:watch` | Vitest in watch mode |
+| `npm run test:sw` | Browser test for the service-worker removal (needs Playwright) |
 | `npm run typecheck` | `tsc -b` across app, worker and node configs |
-| `npm run build` | Typecheck, then build the SPA into `dist/` |
+| `npm run build` | Typecheck, **run the tests**, then build into `dist/` |
 | `npm run dev:worker` | Build, then `wrangler dev` — the real Worker + assets |
 | `npm run deploy` | Build, then `wrangler deploy` |
 | `npm run icons` | Regenerate the PWA icons (output is committed) |
@@ -426,9 +428,49 @@ For anything in Phase 1, `npm run dev` alone is enough.
 
 ### Tests
 
-`npm test` covers the parts where a bug would be silent rather than loud: the
-block aggregation (including the unlogged-days rule), calendar arithmetic across
-DST and month boundaries, and multiplier parsing and rendering.
+**The build runs them.** `npm run build` is `tsc -b && vitest run && vite build`,
+and Cloudflare Workers Builds runs `npm run build` on every push, so a failing
+test fails the deploy. Tests that nothing runs are documentation, and this
+project deploys straight from a push with no other gate.
+
+Three suites, all fast and offline — no network, no database, no browser:
+
+| File | Covers |
+|---|---|
+| `src/lib/logic.test.ts` | Block aggregation, calendar arithmetic across DST and month ends, multiplier parsing and rendering |
+| `src/lib/extract.test.ts` | The client transport: ndjson streaming, the buffered fallback, and normalising a reply |
+| `worker/extract.test.ts` | Reading figures out of what a person or a model actually wrote |
+
+The rule they follow: **pin the bug, not the feature.** Nearly every case in
+these files is a defect that reached the running app, reproduced from the exact
+input that caused it, because those are the ones already proven to be reachable.
+Among them:
+
+- `1,040 kcal` read as **40** — the figure pattern could not cross a comma, and
+  a stated figure overwrites the model, so the meal would have been logged at 40.
+- A nutrition panel pasted as a pipe table parsing as nothing at all, which sent
+  it to the model and timed out.
+- `Calories from Fat|460` being read as total fat.
+- `Calories: 671\nFat Total: 35g` recording **fat** as 671, by binding a label
+  to the previous line's number.
+- An unreadable reply normalising into an all-zero form with HTTP 200 — the
+  "it finished but nothing was populated" bug.
+- An absent fiber figure coerced to `0`, prefilling a measurement nobody took.
+- A day's fiber withheld entirely because one entry of six lacked it, hiding
+  21 real grams.
+- A pre-migration `NULL` day total read as a genuine `0`.
+
+`npm run test:sw` is separate and not part of the build: it drives a real
+Chromium against a server that reproduces the original stale-cache bug, so it
+needs Playwright installed and takes seconds rather than milliseconds. It
+verifies the service-worker teardown, which is itself temporary.
+
+**Not covered, knowingly.** The SQL views and RLS policies have no automated
+test — there is no Postgres in the loop, so `daily_totals` is verified by
+reading it back from the real database after a migration. React components are
+not rendered in tests; the logic they display is tested underneath them, and the
+screens are checked by driving the deployed site. Both would be worth adding if
+this grew past one user.
 
 ---
 
