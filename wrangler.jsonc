@@ -26,7 +26,9 @@
   "vars": {
     "NVIDIA_BASE_URL": "https://integrate.api.nvidia.com/v1",
     // Vision model: reads a nutrition label or a plate photo.
-    "NVIDIA_MODEL": "meta/llama-3.2-90b-vision-instruct",
+    // The 90B variant is listed but never responds for this key; the 11B
+    // reads a real image in under 400ms. Chosen by probing (/api/diag).
+    "NVIDIA_MODEL": "meta/llama-3.2-11b-vision-instruct",
     // Text-only model: parses or estimates a written description. Cheaper
     // than the vision model and better at following the transcribe-vs-
     // estimate rules, which is the part that has to be right.

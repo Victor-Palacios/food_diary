@@ -32,15 +32,17 @@ const MAX_IMAGE_B64_BYTES = 180_000
 const MAX_TEXT_CHARS = 600
 
 /**
- * NVIDIA withdraws hosted models, and a withdrawn id answers 404/410 forever.
- * The live catalog is public and needs no key:
+ * Both ids were chosen by probing the API with this key (GET /api/diag), not
+ * by reading the catalog. Presence in the public /v1/models list is NOT
+ * availability: several plausible ids return 404, and the 90B vision model
+ * -- the obvious choice, and the one configured first -- never responds at
+ * all. The 11B vision model answers a real image in under 400ms.
  *
- *   curl https://integrate.api.nvidia.com/v1/models
- *
- * Both of these are overridable by the vars of the same name in
- * wrangler.jsonc, so swapping a model is a config change, not a code change.
+ * Both are overridable by the vars of the same name in wrangler.jsonc, so
+ * swapping a model is a config change, not a code change. Re-run /api/diag
+ * if either starts failing.
  */
-const DEFAULT_VISION_MODEL = 'meta/llama-3.2-90b-vision-instruct'
+const DEFAULT_VISION_MODEL = 'meta/llama-3.2-11b-vision-instruct'
 
 /**
  * Chosen by probing the API (/api/diag), not by reading the catalog.
