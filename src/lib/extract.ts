@@ -1,4 +1,4 @@
-import type { Nutrition } from './types'
+import type { NutritionInput } from './types'
 
 /**
  * Phase 2 client half. The API key lives server-side in the Worker -- this
@@ -14,7 +14,7 @@ export type ExtractKind = 'label' | 'plate' | 'text'
 export interface ExtractResult {
   name: string
   serving_label: string
-  nutrition: Nutrition
+  nutrition: NutritionInput
   /**
    * False only when the model transcribed figures the user supplied, rather
    * than inventing them. Drives `is_estimate`, so pasted restaurant data is
@@ -269,21 +269,27 @@ function normalize(payload: unknown): ExtractResult {
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
   }
 
-  const nutrition: Nutrition = {
+  const nutrition: NutritionInput = {
     calories: num(n.calories),
     protein_g: num(n.protein_g),
     carbs_g: num(n.carbs_g),
     fat_total_g: num(n.fat_total_g),
     fat_sat_g: num(n.fat_sat_g),
     fat_trans_g: num(n.fat_trans_g),
-    fiber_g: num(n.fiber_g),
+    // Fiber is the one metric where absent and zero mean different things, so
+    // an omitted figure stays unrecorded. Coercing it to 0 would prefill a
+    // measurement nobody took, and the form gives no reason to doubt it.
+    fiber_g:
+      n.fiber_g === null || n.fiber_g === undefined || n.fiber_g === ''
+        ? null
+        : num(n.fiber_g),
   }
 
   // A reply with no name and nothing but zeros is not a result, it is a
   // misunderstanding dressed as one. Saying so beats handing back a blank
   // form that looks like the model simply had no opinion.
   const name = typeof obj.name === 'string' ? obj.name : ''
-  const everythingZero = Object.values(nutrition).every((v) => v === 0)
+  const everythingZero = Object.values(nutrition).every((v) => !v)
   if (!name.trim() && everythingZero) {
     throw new Error(
       'The model returned nothing usable for that. Try rewording it, or enter the values by hand.',

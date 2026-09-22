@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { isTranscription, parseJsonObject, parseLooseReply, readStatedValues } from './extract'
+import {
+  deriveName,
+  deriveServing,
+  isTranscription,
+  parseJsonObject,
+  parseLooseReply,
+  readStatedValues,
+  transcribeLocally,
+} from './extract'
 
 /**
  * A model is not a parser. These are the reply shapes that actually turn up:
@@ -238,6 +246,146 @@ describe('reading a markdown reply', () => {
     const stated = readStatedValues('Calories (per serving): 671\nFat Total: 35g')
     expect(stated.calories).toBe(671)
     expect(stated.fat_total_g).toBe(35)
+  })
+})
+
+/**
+ * When the description already carries the figures, the model's answer is
+ * thrown away -- applyStatedValues overwrites every value the user typed. The
+ * two texts below are the ones the user actually sent; measured end to end,
+ * the second took 50-80s on every attempt just to echo numbers back.
+ *
+ * So these are answered from the text alone. Both real inputs are pinned
+ * here, because a wrong local answer is now a wrong answer with no model in
+ * the loop to disagree with it.
+ */
+describe('answering from the text alone', () => {
+  const BISON = `Here are the nutritional facts from the label:
+
+* Protein: 47g
+* Carbs: 68g
+* Fat: 34g
+* Fiber: 10g
+* Calories: 766
+
+This is for the Grass Fed Bison Meatloaf.`
+
+  const SOUP = `Organic Butter Bean Soup with Leeks, Organic Free-Range Chicken, and Smoked 5 Seed Crunch
+* **Serving Label:** 1 plate as shown
+* **Nutrition:**
+  * Calories: 671
+  * Protein: 51g
+  * Carbs: 38g
+  * Fat Total: 35g
+  * Fiber: 11g`
+
+  it('transcribes the label list the user sent', () => {
+    const out = transcribeLocally(BISON)
+    expect(out?.ok).toBe(true)
+    const result = (out as { ok: true; result: Record<string, unknown> }).result
+    expect(result.nutrition).toEqual({
+      calories: 766,
+      protein_g: 47,
+      carbs_g: 68,
+      fat_total_g: 34,
+      fat_sat_g: 0,
+      fat_trans_g: 0,
+      fiber_g: 10,
+    })
+    expect(result.estimated).toBe(false)
+    expect(result.name).toBe('Grass Fed Bison Meatloaf')
+  })
+
+  it('transcribes the dish the model spent 50-80s echoing back', () => {
+    const out = transcribeLocally(SOUP)
+    expect(out?.ok).toBe(true)
+    const result = (out as { ok: true; result: Record<string, unknown> }).result
+    expect(result.nutrition).toEqual({
+      calories: 671,
+      protein_g: 51,
+      carbs_g: 38,
+      fat_total_g: 35,
+      fat_sat_g: 0,
+      fat_trans_g: 0,
+      fiber_g: 11,
+    })
+    expect(result.estimated).toBe(false)
+    expect(result.name).toBe(
+      'Organic Butter Bean Soup with Leeks, Organic Free-Range Chicken, and Smoked 5 Seed Crunch',
+    )
+    expect(result.serving_label).toBe('1 plate as shown')
+  })
+
+  it('says which values it filled in rather than read', () => {
+    const notes = String(
+      (transcribeLocally(BISON) as { ok: true; result: Record<string, unknown> }).result.notes,
+    )
+    expect(notes).toMatch(/fat_sat_g/)
+    expect(notes).toMatch(/fat_trans_g/)
+    // Fiber was stated here, so it must not be listed as filled in.
+    expect(notes).not.toMatch(/fiber/)
+  })
+
+  it('leaves unstated fiber unrecorded, not zero', () => {
+    const out = transcribeLocally('766 cal, 47g protein, 68g carbs, 34g fat, bison meatloaf')
+    const n = (out as { ok: true; result: Record<string, unknown> }).result
+      .nutrition as Record<string, unknown>
+    expect(n.fiber_g).toBeNull()
+  })
+
+  it('falls back to a default serving when none is given', () => {
+    const out = transcribeLocally(BISON)
+    expect((out as { ok: true; result: Record<string, unknown> }).result.serving_label).toBe(
+      '1 serving',
+    )
+  })
+
+  it('declines anything short of all four core figures, leaving it to the model', () => {
+    expect(transcribeLocally('Chipotle chicken bowl, 800 cal')).toBeNull()
+    expect(transcribeLocally('2 scrambled eggs, toast with butter, black coffee')).toBeNull()
+    expect(transcribeLocally('766 cal, 47g protein, 68g carbs')).toBeNull()
+  })
+})
+
+describe('naming a dish from the words around the figures', () => {
+  it('drops the lead-in and keeps the dish', () => {
+    expect(deriveName('Here are the facts: 500 cal, 20g protein, 40g carbs, 18g fat. Chicken Katsu Curry')).toBe(
+      'Chicken Katsu Curry',
+    )
+  })
+
+  it('keeps a name that shares its line with the figures', () => {
+    expect(deriveName('Chicken bowl, 630 cal, 45g protein, 60g carbs, 22g fat')).toBe(
+      'Chicken bowl',
+    )
+  })
+
+  it('is not fooled by the section labels a model writes', () => {
+    const name = deriveName(`* **Name:** Steak Frites
+* **Serving Label:** 1 plate
+* **Nutrition:**
+  * Calories: 900`)
+    // "Name:" is a label, not part of the dish.
+    expect(name).toContain('Steak Frites')
+    expect(name).not.toMatch(/Serving|Nutrition|Calories/)
+  })
+
+  it('returns empty rather than guessing when there is nothing but numbers', () => {
+    expect(deriveName('766 cal, 47g protein, 68g carbs, 34g fat')).toBe('')
+  })
+})
+
+describe('reading the serving the user stated', () => {
+  it('reads it through markdown emphasis', () => {
+    expect(deriveServing('* **Serving Label:** 1 plate as shown')).toBe('1 plate as shown')
+  })
+
+  it('reads a plain serving size', () => {
+    expect(deriveServing('Serving size: 2 slices')).toBe('2 slices')
+  })
+
+  it('reports nothing when the text never says', () => {
+    expect(deriveServing('Chicken bowl, 630 cal')).toBeUndefined()
   })
 })
 

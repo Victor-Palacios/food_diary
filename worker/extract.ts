@@ -301,6 +301,16 @@ export async function handleExtract(
   // Everything above this point fails fast and gets an ordinary status code.
   // From here the model call can take minutes, so the reply is streamed --
   // see streamWhileWorking for why.
+  // If the description states the figures, answer from the text alone: no
+  // model, no wait, and exactly the numbers that were typed.
+  if (kind === 'text') {
+    const local = transcribeLocally(description)
+    if (local) {
+      console.log('Transcribed locally; no model call needed.')
+      return json(local.ok ? local.result : { error: local.error }, local.ok ? 200 : 502)
+    }
+  }
+
   const work = (budgetMs: number) =>
     runExtraction(env, baseUrl, model, visionModel, messageContent, kind, budgetMs).then(
       (final) =>
@@ -360,6 +370,98 @@ function applyStatedValues(
     // are absent the model's own judgement stands.
     estimated: transcribed ? false : result.estimated,
   }
+}
+
+/**
+ * Builds the answer locally when the description already states the figures.
+ *
+ * Measured: a description that states its macros takes the model 50-80s to
+ * echo back, every time, while a plain one takes 4-9s. It is not queueing --
+ * it is input-dependent, so hedging cannot help. And the model's answer is
+ * discarded anyway: applyStatedValues overwrites every value the user
+ * supplied, because a figure they typed is ground truth.
+ *
+ * So for that case the model is pure latency. Transcription is something the
+ * app can simply do, instantly and exactly.
+ */
+export function transcribeLocally(description: string): Final | null {
+  const stated = readStatedValues(description)
+  if (!isTranscription(stated)) return null
+
+  const absent = (['fat_sat_g', 'fat_trans_g'] as const).filter(
+    (k) => stated[k] === undefined,
+  )
+
+  return {
+    ok: true,
+    result: {
+      name: deriveName(description),
+      serving_label: deriveServing(description) ?? '1 serving',
+      estimated: false,
+      nutrition: {
+        calories: stated.calories,
+        protein_g: stated.protein_g,
+        carbs_g: stated.carbs_g,
+        fat_total_g: stated.fat_total_g,
+        fat_sat_g: stated.fat_sat_g ?? 0,
+        fat_trans_g: stated.fat_trans_g ?? 0,
+        // Unstated fiber stays unrecorded rather than becoming a zero.
+        fiber_g: stated.fiber_g ?? null,
+      },
+      notes: absent.length
+        ? `Read straight from your text. ${absent.join(' and ')} were not stated, recorded as 0.`
+        : 'Read straight from your text.',
+    },
+  }
+}
+
+/** Strips the figures and the boilerplate, leaving what the food is called. */
+export function deriveName(text: string): string {
+  let t = text.replace(/\*+/g, ' ')
+
+  // Remove "<metric> ...: <number><unit>" pairs, whichever way round.
+  const metrics =
+    'calories|kcals?|cals?|protein|carbohydrates?|carbs?|total fat|saturated fat|sat\.? ?fat|trans ?fat|fat|fibre|fiber'
+  t = t.replace(
+    new RegExp(`\\b(?:${metrics})\\b[^:\\n\\d]{0,18}[:=]?[^\\S\\n]*\\d+(?:\\.\\d+)?[^\\S\\n]*(?:g|grams?|kcals?|cals?)?`, 'gi'),
+    ' ',
+  )
+  t = t.replace(
+    new RegExp(`\\d+(?:\\.\\d+)?[^\\S\\n]*(?:g|grams?|kcals?|cals?)?[^\\S\\n]*(?:of[^\\S\\n]+)?(?:${metrics})\\b`, 'gi'),
+    ' ',
+  )
+  // Remove the labels that introduce those figures. "facts" and "label" earn
+  // their place here: without them, "Here are the facts: ..." leaves the word
+  // "facts" behind and it wins the longest-fragment contest against a short
+  // dish name.
+  t = t.replace(
+    /\b(serving label|serving size|serving|nutritional facts|nutrition facts|nutrition|facts|label|name)\b\s*[:=]?/gi,
+    ' ',
+  )
+
+  const fragments = t
+    .split(/[\n•·|]+/)
+    .map((part) =>
+      part
+        .replace(/\s+/g, ' ')
+        // Lead-ins people actually type before the real name.
+        .replace(/^\s*(?:here (?:are|is)|this is (?:for|from)|these are)\b[^a-z0-9]*/i, '')
+        .replace(/^\s*from the label\b[^a-z0-9]*/i, '')
+        .replace(/^\s*the\s+/i, '')
+        .replace(/^[^a-z0-9]+/i, '')
+        .replace(/[\s:,.;-]+$/, '')
+        .trim(),
+    )
+    .filter((part) => part.length > 2)
+
+  // The longest surviving fragment is the dish; the rest is scaffolding.
+  fragments.sort((a, b) => b.length - a.length)
+  return fragments[0] ?? ''
+}
+
+export function deriveServing(text: string): string | undefined {
+  const m = /serving(?:[ _]?label|[ _]?size)?\s*[:=]\s*\*{0,2}\s*([^\n*]+)/i.exec(text)
+  return m?.[1]?.replace(/[\s:,.;-]+$/, '').trim() || undefined
 }
 
 /** The single line the client ultimately reads off the stream. */
