@@ -40,7 +40,7 @@ multiplier preset → `Save`.
 | Client | Vite + React + TypeScript, no UI framework |
 | Data | Supabase (Postgres + RLS) |
 | Auth | Supabase Auth, one seeded account |
-| PWA | `vite-plugin-pwa` manifest only — installable, **no service worker** |
+| PWA | Hand-written manifest — installable, **no service worker** |
 
 One Worker serves both the SPA and the API. Static assets in `dist/` are matched
 first; `run_worker_first: ["/api/*"]` carves out the API routes so they reach
@@ -134,11 +134,20 @@ impossible.
 
 **Two things remain, on purpose.**
 
-`selfDestroying: true` in `vite.config.ts` still emits an `sw.js`, whose only
-job is to unregister itself and delete its caches. Dropping the file from the
+`public/sw.js` is a worker whose only job is to remove itself: it claims the
+page, deletes every cache, reloads, and unregisters. Dropping the file from the
 build would *not* remove a worker from a phone that already installed one —
-that worker keeps serving its own precached shell indefinitely. This replaces
-it and cleans up. The flag can go once no install predates that change.
+that worker keeps serving its own precached shell indefinitely, and a worker is
+only replaced by another worker. `index.html` registers it **only** when
+`navigator.serviceWorker.controller` is set, so a first-time visitor never
+installs one.
+
+Measured in Chromium against a server that reproduces the original bug
+(`scripts/sw-cleanup-test.mjs`): an install carrying the old precaching worker heals
+in **one open, about 3 seconds**, ending at zero registrations and zero caches,
+with no reload loop. Three ordering constraints are load-bearing and each was
+found by it failing — see the comments in the file before changing anything
+there. Deletable once no install predates this build.
 
 `src/components/UpdateBanner.tsx` stays as a safety net. It compares the build
 stamp compiled into the running bundle against `/version.json`, fetched
@@ -558,7 +567,7 @@ rare backfill.
 ```
 index.html                 SPA entry
 wrangler.jsonc             Worker config: assets, routing, non-secret vars
-vite.config.ts             Build + PWA manifest + /api dev proxy
+vite.config.ts             Build + build stamp + /api dev proxy
 
 worker/
   index.ts                 Routes /api/*, falls back to static assets
@@ -584,6 +593,12 @@ supabase/
   seed.sql                 Opening targets
 
 scripts/generate-icons.mjs PNG icon generator (no image dependency)
+scripts/sw-cleanup-test.mjs Browser test for the service-worker removal
+
+public/
+  manifest.webmanifest     Installability: icon, name, standalone display
+  sw.js                    Removes the old precaching worker (temporary)
+  icons/                   Generated PNGs, committed
 ```
 
 ### Out of scope, on purpose

@@ -12,10 +12,40 @@
     <meta name="apple-mobile-web-app-title" content="Food Log" />
     <link rel="icon" type="image/png" href="/icons/favicon.png" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <!-- Installable: home-screen icon and standalone display. No service
+         worker, so this app is not offline-capable, which was never asked
+         for. See "Installable, not offline" in the README. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
     <title>Food Log</title>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Only reached by a browser that still has the old precaching worker:
+      // registering pokes the update check, and /sw.js replaces that worker
+      // and tears it down. A first-time visitor has nothing to clean up, and
+      // registering anyway would install a worker whose activate step reloads
+      // the page -- a reload loop, not a no-op. Hence the guard.
+      //
+      // `controller` is the right test, not getRegistrations(). It is
+      // non-null only when this document was served by a worker, so it is
+      // null for a new visitor and null again once the cleanup has run, which
+      // makes the loop impossible rather than unlikely. A registration that
+      // is merely mid-teardown still reads as 1 and would re-register.
+      //
+      // ?swreset=1 means /sw.js reloaded this page itself, having just
+      // unregistered. It is still the controller at that moment, so without
+      // this check the guard would register again and resurrect the
+      // registration it was tearing down. Then the marker is dropped from the
+      // URL, since it is finished with and would otherwise sit there.
+      var swReset = location.search.indexOf('swreset=') !== -1
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller && !swReset) {
+        navigator.serviceWorker.register('/sw.js')
+      }
+      if (swReset) {
+        history.replaceState(null, '', location.pathname + location.hash)
+      }
+    </script>
   </body>
 </html>
