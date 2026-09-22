@@ -77,6 +77,22 @@ const HEARTBEAT_MS = 10_000
 /** No point starting a call that cannot plausibly finish. */
 const MIN_ATTEMPT_MS = 8_000
 
+/**
+ * When to fire a second, identical request alongside a slow first one.
+ *
+ * Measured against the live API, the same input returns in about 4-9s
+ * seven times out of eight -- and then once takes 70-90s. That spread is
+ * queueing, not work: the slow call is waiting for capacity, not thinking
+ * harder. A duplicate request usually lands on a free worker and answers in
+ * the normal few seconds, so racing the two cuts the tail without changing
+ * the typical case.
+ *
+ * The cost is one extra call on the minority of requests that are slow. At a
+ * handful of meals a day that is negligible, and a 70s wait on a phone is
+ * not.
+ */
+const HEDGE_AFTER_MS = 15_000
+
 const LABEL_PROMPT = `You are reading a printed nutrition facts panel from a photograph.
 
 Extract the values for ONE SERVING as printed on the label. If the label shows
@@ -487,30 +503,35 @@ async function callModel(
   const startedAt = Date.now()
   const timeoutMs = Math.max(MIN_ATTEMPT_MS, deadline - startedAt)
 
-  let upstream: Response
-  try {
-    upstream = await fetch(`${baseUrl}/chat/completions`, {
+  const requestBody = JSON.stringify({
+    model,
+    messages: [{ role: 'user', content: messageContent }],
+    // Low temperature: this is a transcription task for labels and a
+    // point estimate for plates. Neither wants creativity.
+    temperature: 0.1,
+    top_p: 0.9,
+    // Generous: the JSON is short, but a model that narrates before
+    // answering would otherwise be cut off mid-object, and a truncated
+    // reply is indistinguishable from a broken one.
+    max_tokens: 1500,
+    stream: false,
+  })
+
+  const send = (signal: AbortSignal): Promise<Response> =>
+    fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
-      signal: AbortSignal.timeout(timeoutMs),
+      signal,
       headers: {
         authorization: `Bearer ${env.NVIDIA_API_KEY}`,
         'content-type': 'application/json',
         accept: 'application/json',
       },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: messageContent }],
-        // Low temperature: this is a transcription task for labels and a
-        // point estimate for plates. Neither wants creativity.
-        temperature: 0.1,
-        top_p: 0.9,
-        // Generous: the JSON is short, but a model that narrates before
-        // answering would otherwise be cut off mid-object, and a truncated
-        // reply is indistinguishable from a broken one.
-        max_tokens: 1500,
-        stream: false,
-      }),
+      body: requestBody,
     })
+
+  let upstream: Response
+  try {
+    upstream = await hedge(send, timeoutMs, model, kind)
   } catch (e) {
     const elapsed = Date.now() - startedAt
     const timedOut =
@@ -731,6 +752,72 @@ export function isTranscription(stated: StatedValues): boolean {
     stated.carbs_g !== undefined &&
     stated.fat_total_g !== undefined
   )
+}
+
+/**
+ * Sends the request, and if it has not answered within HEDGE_AFTER_MS sends
+ * a second identical one, returning whichever replies first and cancelling
+ * the other. Both share the overall timeout.
+ */
+async function hedge(
+  send: (signal: AbortSignal) => Promise<Response>,
+  timeoutMs: number,
+  model: string,
+  kind: string,
+): Promise<Response> {
+  // Each attempt carries its own controller so the LOSER can be cancelled
+  // without touching the winner -- aborting the winner would tear down the
+  // response before its body is read.
+  interface Attempt {
+    controller: AbortController
+    promise: Promise<Response>
+  }
+
+  const start = (): Attempt => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(new Error('TimeoutError')), timeoutMs)
+    const promise = send(controller.signal).finally(() => clearTimeout(timer))
+    // Nothing may be listening if this one loses the race; without a no-op
+    // handler that becomes an unhandled rejection.
+    promise.catch(() => {})
+    return { controller, promise }
+  }
+
+  const first = start()
+
+  // Nothing to hedge against if the budget is nearly spent anyway.
+  if (timeoutMs <= HEDGE_AFTER_MS + MIN_ATTEMPT_MS) return first.promise
+
+  const HEDGE = Symbol('hedge')
+  const raced = await Promise.race([
+    first.promise.then((r) => ({ ok: r })).catch((e: unknown) => ({ err: e })),
+    new Promise<typeof HEDGE>((resolve) => setTimeout(() => resolve(HEDGE), HEDGE_AFTER_MS)),
+  ])
+
+  if (raced !== HEDGE) {
+    if ('ok' in raced) return raced.ok
+    throw raced.err
+  }
+
+  console.log(`NVIDIA ${kind} via ${model}: slow past ${HEDGE_AFTER_MS}ms, hedging`)
+  const second = start()
+
+  // Tag each attempt so the winner is identifiable and only the other one
+  // gets cancelled. Promise.any resolves on the first SUCCESS, so a single
+  // failing attempt does not sink the other.
+  const tagged = [first, second].map((a) =>
+    a.promise.then((response) => ({ response, attempt: a })),
+  )
+
+  try {
+    const winner = await Promise.any(tagged)
+    for (const a of [first, second]) if (a !== winner.attempt) a.controller.abort()
+    return winner.response
+  } catch (e) {
+    first.controller.abort()
+    second.controller.abort()
+    throw e instanceof AggregateError ? (e.errors[0] ?? e) : e
+  }
 }
 
 function tryParse(source: string): Record<string, unknown> | null {
