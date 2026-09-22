@@ -465,8 +465,13 @@ export function deriveName(text: string): string {
 }
 
 export function deriveServing(text: string): string | undefined {
-  const m = /serving(?:[ _]?label|[ _]?size)?\s*[:=]\s*\*{0,2}\s*([^\n*]+)/i.exec(text)
-  return m?.[1]?.replace(/[\s:,.;-]+$/, '').trim() || undefined
+  const m =
+    /\bserving(?:[ _]?label|[ _]?size)?[^\S\n]*[:=][^\S\n]*\*{0,2}[^\S\n]*([^\n*|]+)/i.exec(
+      text,
+    ) ??
+    // The column form of a pasted table: "|Serving          |18.6 oz   |".
+    /\bserving(?:[ _]?label|[ _]?size)?[^\S\n]*\|[^\S\n]*([^\n|]+)/i.exec(text)
+  return m?.[1]?.replace(/[\s:,.;|-]+$/, '').trim() || undefined
 }
 
 /** The single line the client ultimately reads off the stream. */
@@ -838,8 +843,46 @@ function extractObject(candidate: string): Record<string, unknown> | null {
  * marking "630 cal, 45g protein, ..." as an estimate, so the question is
  * settled here instead, from the text the user actually typed.
  *
- * Handles both orders people write in -- "47g protein" and "Protein: 47g".
+ * Handles both orders people write in -- "47g protein" and "Protein: 47g" --
+ * and the pipe tables people paste from a nutrition panel.
  */
+
+/**
+ * A figure, with or without thousands separators.
+ *
+ * The plain `\d+` this used to be read "1,040 kcal" as **40**: it could not
+ * cross the comma, so it matched the "040" and stopped. That is the worst
+ * kind of bug this app can have -- applyStatedValues treats a stated figure
+ * as ground truth and overwrites the model with it, so a 1,040 kcal meal
+ * would have been logged as 40 with nothing anywhere saying so.
+ *
+ * The grouped form is tried first and requires exactly three digits after
+ * each comma, so "630 cal, 45g protein" still reads as two separate numbers.
+ */
+const NUM = String.raw`\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?`
+
+/** Reads a captured figure, dropping any thousands separators. */
+function toNumber(raw: string): number {
+  return Number(raw.replace(/,/g, ''))
+}
+
+/**
+ * What may sit between a label and its number: spaces, and the punctuation
+ * that separates columns or decorates a label. Never a newline -- a number
+ * ending one line must not bind to a label starting the next -- and never a
+ * letter, which is what stops "Calories from Fat|460" reading as fat.
+ */
+const SEP = String.raw`[^\S\n|:=*.\-]*[|:=*\-]?[^\S\n|:=*.\-]*`
+
+/**
+ * Label text that looks like a metric and is not one.
+ *
+ * "Calories from Fat" is on every US nutrition panel and contains both
+ * "calories" and "fat". Blanking the words leaves its number stranded on its
+ * own row, where nothing can bind to it.
+ */
+const DECOYS = /calories\s+from\s+fat/gi
+
 const METRIC_WORDS: Array<[keyof StatedValues, string]> = [
   // Longest and most specific first: "saturated fat" must not be read as
   // plain "fat", and "total fat" must not be read as "sat fat".
@@ -864,7 +907,9 @@ export interface StatedValues {
 
 export function readStatedValues(text: string): StatedValues {
   const found: StatedValues = {}
-  let remaining = ` ${text} `
+  // Blank the decoy labels rather than dropping them, so every other offset
+  // in the text stays where it was.
+  let remaining = ` ${text} `.replace(DECOYS, (m) => ' '.repeat(m.length))
 
   for (const [key, words] of METRIC_WORDS) {
     // "47 g protein" / "47g of protein"
@@ -872,23 +917,27 @@ export function readStatedValues(text: string): StatedValues {
     // number ending one line bind to a label starting the next, so
     // "Calories: 671\nFat Total: 35g" recorded fat as 671.
     const before = new RegExp(
-      `(\\d+(?:\\.\\d+)?)[^\\S\\n]*(?:g|grams?|kcals?|cals?)?[^\\S\\n]*(?:of[^\\S\\n]+)?(?:${words})\\b`,
+      `(${NUM})[^\\S\\n]*(?:g|grams?|kcals?|cals?)?[^\\S\\n]*(?:of[^\\S\\n]+)?(?:${words})\\b`,
       'i',
     )
-    // "protein: 47g" / "protein 47 g"
-    const after = new RegExp(`\\b(?:${words})\\b\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)`, 'i')
+    // "protein: 47g" / "protein 47 g" / "|Protein   |38 g|" -- SEP covers the
+    // column pipes of a pasted nutrition table, and excludes newlines so a
+    // label at the end of one row cannot claim the next row's figure.
+    const after = new RegExp(`\\b(?:${words})\\b${SEP}(${NUM})`, 'i')
     // "Fat Total: 35g" / "Calories (per serving): 671" -- a few words may sit
-    // between the label and the colon. Kept on one line so it cannot reach
-    // across into a different metric's value.
+    // between the label and the colon. This one allows letters in between, so
+    // it demands a colon or equals to anchor on; widening it to pipes as well
+    // would let "Calories from Fat|460" through on the strength of the word
+    // "Calories".
     const loose = new RegExp(
-      `\\b(?:${words})\\b[^:\\n\\d]{0,18}[:=]\\s*\\**\\s*(\\d+(?:\\.\\d+)?)`,
+      `\\b(?:${words})\\b[^:\\n\\d]{0,18}[:=][^\\S\\n]*\\**[^\\S\\n]*(${NUM})`,
       'i',
     )
 
     const m = before.exec(remaining) ?? after.exec(remaining) ?? loose.exec(remaining)
     if (!m) continue
 
-    const value = Number(m[1])
+    const value = toNumber(m[1])
     if (!Number.isFinite(value) || value < 0) continue
 
     found[key] = value

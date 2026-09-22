@@ -403,6 +403,95 @@ describe('reading the serving the user stated', () => {
   })
 })
 
+/**
+ * A nutrition panel pasted as a markdown table.
+ *
+ * This is the text that produced the worst bug in the project: the parser
+ * could not cross the comma in "1,040 kcal", matched the "040" and reported
+ * 40 calories. applyStatedValues treats a stated figure as ground truth and
+ * overwrites the model with it, so the meal would have been logged at 40 kcal
+ * with nothing anywhere saying otherwise. It also found nothing else at all,
+ * so the request went to the model and timed out -- which is how it surfaced.
+ */
+describe('reading a pasted nutrition table', () => {
+  const WRAP = `Mendocino Thai Mango Wrap: |Nutrient         |Total     |
+|-----------------|----------|
+|Serving          |18.6 oz   |
+|Calories         |1,040 kcal|
+|Calories from Fat|460       |
+|Total Fat        |50.5 g    |
+|Saturated Fat    |15 g      |
+|Trans Fat        |0 g       |
+|Cholesterol      |60 mg     |
+|Sodium           |2,150 mg  |
+|Carbohydrates    |112 g     |
+|Fiber            |8 g       |
+|Total Sugar      |31 g      |
+|Protein          |38 g      |`
+
+  it('reads every figure out of the pipe columns', () => {
+    expect(readStatedValues(WRAP)).toEqual({
+      calories: 1040,
+      protein_g: 38,
+      carbs_g: 112,
+      fat_total_g: 50.5,
+      fat_sat_g: 15,
+      fat_trans_g: 0,
+      fiber_g: 8,
+    })
+  })
+
+  it('does not read "Calories from Fat" as either calories or fat', () => {
+    // 460 is on that row. Calories is 1,040 and total fat is 50.5; letting
+    // the decoy win would corrupt whichever it reached first.
+    const stated = readStatedValues(WRAP)
+    expect(stated.calories).not.toBe(460)
+    expect(stated.fat_total_g).not.toBe(460)
+  })
+
+  it('ignores the nutrients this app does not track', () => {
+    // Cholesterol 60, sodium 2,150 and sugar 31 must not land anywhere.
+    const values = Object.values(readStatedValues(WRAP))
+    expect(values).not.toContain(60)
+    expect(values).not.toContain(2150)
+    expect(values).not.toContain(31)
+  })
+
+  it('answers it locally, so the model is never called', () => {
+    const out = transcribeLocally(WRAP)
+    expect(out?.ok).toBe(true)
+    const result = (out as { ok: true; result: Record<string, unknown> }).result
+    expect(result.estimated).toBe(false)
+    expect(result.name).toBe('Mendocino Thai Mango Wrap')
+    expect(result.serving_label).toBe('18.6 oz')
+    expect((result.nutrition as Record<string, unknown>).calories).toBe(1040)
+  })
+})
+
+describe('figures written with thousands separators', () => {
+  it('reads 1,040 as 1040 rather than 40', () => {
+    expect(readStatedValues('1,040 kcal').calories).toBe(1040)
+    expect(readStatedValues('Calories: 1,040').calories).toBe(1040)
+    expect(readStatedValues('Calories | 1,040').calories).toBe(1040)
+  })
+
+  it('reads a figure in the millions', () => {
+    expect(readStatedValues('Calories: 1,234,567').calories).toBe(1234567)
+  })
+
+  it('keeps a comma between two figures as a separator', () => {
+    // The grouped form needs exactly three digits after the comma, so this
+    // is still two numbers rather than one.
+    const stated = readStatedValues('630 cal, 45g protein, 60g carbs, 22g fat')
+    expect(stated.calories).toBe(630)
+    expect(stated.protein_g).toBe(45)
+  })
+
+  it('does not join a comma followed by a space', () => {
+    expect(readStatedValues('Calories: 630, 45g protein').calories).toBe(630)
+  })
+})
+
 describe('metric labels never bind across a line break', () => {
   it('does not read the previous line\'s number as this line\'s metric', () => {
     // Without a newline guard, "671\nFat" matched and fat became 671.
