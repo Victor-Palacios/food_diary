@@ -176,8 +176,9 @@ No CLI needed — all of this can be done in the browser at
    `food_usage` views, and enables RLS with owner-scoped policies on all three
    tables.
 
-   Then run `supabase/migrations/0002_optional_fiber.sql` the same way. It
-   makes fiber nullable — see [Fiber is optional](#fiber-is-optional).
+   Then run `supabase/migrations/0002_optional_fiber.sql` and
+   `supabase/migrations/0003_fiber_totals_count_known.sql` the same way, in
+   that order — see [Fiber is optional](#fiber-is-optional).
 
    With the CLI instead, if you prefer:
 
@@ -231,11 +232,26 @@ fiber average down, which is the same mistake as counting an unlogged day as a
 
 - Leaving the fiber box empty stores NULL. Every other metric still treats
   blank as 0, because calories and macros are always on the label or the scale.
-- A **day's** fiber is known only when every entry that day recorded it;
-  otherwise `daily_totals.fiber_g` is NULL rather than a partial sum.
-- Fiber averages cover only the days that recorded it, and the dashboard
-  reports how many days that was.
-- Unrecorded values render as `—`, never as `0`.
+- A single food or entry with no fiber figure renders as `—`, never as `0`.
+  That dash is the prompt to record it next time.
+
+**Totals count what was recorded.** A day's `fiber_g` sums the entries that
+have a figure and counts the rest as zero, and averages cover every logged day
+the same way.
+
+This replaced the stricter original rule, where a day's fiber was NULL unless
+*every* entry recorded it. That is defensible in isolation and was useless in
+practice. Measured on the real log: 152 foods, 3 with fiber; one day of six
+entries, two of them carrying 11 g and 10 g. The day reported NULL, so 21 g of
+real data showed as a dash and was excluded from every average. The strictness
+did not protect a number, it deleted one.
+
+The honesty it was protecting is kept by reporting coverage instead of
+withholding the figure — `fiber_entry_count` against `entry_count` — so the UI
+says "at least this much: 2 of 6 entries recorded fiber" rather than implying a
+complete measurement. Storage is unchanged; NULL still means *not recorded*,
+because that is a different fact from a measured zero and only one of them is
+worth going back to fix.
 
 ---
 

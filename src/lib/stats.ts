@@ -1,4 +1,4 @@
-import { METRICS, type DailyTotals, type Metric, type NutritionInput } from './types'
+import { METRICS, type DailyTotals, type Metric, type Nutrition, type NutritionInput } from './types'
 import { ZERO_NUTRITION } from './types'
 import type { IsoDate } from './dates'
 
@@ -18,16 +18,19 @@ export interface Aggregate {
   daysLogged: number
   /** Total days in the window, logged or not. */
   daysInWindow: number
-  /** Mean per LOGGED day. Fiber is null when no day recorded it. */
-  mean: NutritionInput
-  /** Median per LOGGED day. Fiber is null when no day recorded it. */
-  median: NutritionInput
+  /** Mean per LOGGED day. */
+  mean: Nutrition
+  /** Median per LOGGED day. */
+  median: Nutrition
   /** Sum across logged days. Meaningful for a single day, not for a range. */
-  total: NutritionInput
+  total: Nutrition
   /**
-   * Logged days whose fiber is fully recorded. Fiber averages cover only
-   * these, so the UI can say what the figure is actually based on rather
-   * than passing off a partial average as the whole picture.
+   * Logged days where every entry recorded fiber.
+   *
+   * Fiber is averaged over all logged days, counting an unrecorded entry as
+   * zero, so there is always a figure to show. This says how much of the
+   * window that figure actually covers, which is the difference between a
+   * mean and a floor -- the UI reports it next to the number.
    */
   fiberDaysKnown: number
 }
@@ -62,10 +65,15 @@ export function aggregate(
     (d) => d.eaten_on >= windowStart && d.eaten_on <= windowEnd && d.entry_count > 0,
   )
 
-  // Fiber is averaged only over days that actually recorded it. Folding an
-  // unrecorded day in as a zero would understate the average and never say
-  // so -- the same trap as counting an unlogged day as 0 calories.
-  const fiberDays = inWindow.filter((d) => d.fiber_g !== null && d.fiber_g !== undefined)
+  // Fiber is averaged over every logged day, counting what was not recorded
+  // as zero. Restricting it to fully-recorded days was more defensible in
+  // principle and useless in practice: with 3 of 152 foods carrying a fiber
+  // figure, no day qualified, so the dashboard showed a dash and 21 g of real
+  // data was invisible. A floor you can see beats a mean you cannot.
+  //
+  // The number is reported with its coverage rather than on its own, so it is
+  // read as "at least this much" where that is what it means.
+  const fiberDays = inWindow.filter((d) => d.fiber_entry_count >= d.entry_count)
 
   const result: Aggregate = {
     daysLogged: inWindow.length,
@@ -77,15 +85,7 @@ export function aggregate(
   }
 
   for (const metric of METRICS) {
-    const source = metric === 'fiber_g' ? fiberDays : inWindow
-    const values = source.map((d) => Number(d[metric]) || 0)
-
-    if (metric === 'fiber_g' && values.length === 0) {
-      result.mean.fiber_g = null
-      result.median.fiber_g = null
-      result.total.fiber_g = null
-      continue
-    }
+    const values = inWindow.map((d) => Number(d[metric]) || 0)
 
     result.mean[metric] = mean(values)
     result.median[metric] = median(values)
@@ -98,29 +98,30 @@ export function aggregate(
 /**
  * Sums a set of nutrition-bearing rows (log entries for one day).
  *
- * The day's fiber is known only when every row recorded it. One unrecorded
- * entry makes the day's total a partial sum, and reporting a partial sum as
- * the whole is how an average quietly drifts low.
+ * Fiber sums the rows that recorded it and counts the rest as zero, matching
+ * the `daily_totals` view. `fiberEntryCount` is returned alongside rather than
+ * folded in, because a total covering 2 of 6 entries is a floor, not a
+ * measurement, and only the caller can say that next to the figure.
  */
 export function sumNutrition(
   rows: Array<Partial<Record<Metric, number | null>>>,
-): NutritionInput {
-  const out: NutritionInput = { ...ZERO_NUTRITION }
-  let fiberComplete = true
+): Nutrition & { fiberEntryCount: number } {
+  const out: Nutrition = { ...ZERO_NUTRITION }
+  let fiberEntryCount = 0
 
   for (const row of rows) {
     for (const metric of METRICS) {
       if (metric === 'fiber_g') {
-        if (row.fiber_g === null || row.fiber_g === undefined) fiberComplete = false
-        else out.fiber_g = (out.fiber_g ?? 0) + (Number(row.fiber_g) || 0)
+        if (row.fiber_g === null || row.fiber_g === undefined) continue
+        fiberEntryCount += 1
+        out.fiber_g += Number(row.fiber_g) || 0
         continue
       }
       out[metric] += Number(row[metric]) || 0
     }
   }
 
-  if (!fiberComplete) out.fiber_g = null
-  return out
+  return { ...out, fiberEntryCount }
 }
 
 /** Scales a per-serving snapshot by a multiplier, for live preview. */

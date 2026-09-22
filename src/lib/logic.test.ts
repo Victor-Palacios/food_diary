@@ -228,52 +228,72 @@ describe('fiber may be unrecorded', () => {
   const start = '2026-03-01'
   const end = '2026-03-21'
 
-  function withFiber(date: string, calories: number, fiber: number | null): DailyTotals {
-    return { ...day(date, calories), fiber_g: fiber, fiber_entry_count: fiber === null ? 0 : 1 }
+  /**
+   * `fiber` is the day's total as the view reports it -- the entries that
+   * recorded fiber, summed. `covered` is how many of the day's entries that
+   * was, which is what separates a mean from a floor.
+   */
+  function withFiber(
+    date: string,
+    calories: number,
+    fiber: number,
+    covered = 1,
+  ): DailyTotals {
+    return { ...day(date, calories), fiber_g: fiber, fiber_entry_count: covered }
   }
 
-  it('averages fiber over only the days that recorded it', () => {
-    // Two days at 20 g and one unrecorded. Counting the third as 0 would
-    // give 13.3; the honest answer over known days is 20.
+  it('averages fiber over every logged day, counting unrecorded as zero', () => {
+    // Withholding this was the bug: with fiber on almost nothing, no day
+    // qualified as fully recorded and the figure never appeared at all.
     const days = [
       withFiber('2026-03-01', 2000, 20),
       withFiber('2026-03-02', 2000, 20),
-      withFiber('2026-03-03', 2000, null),
+      withFiber('2026-03-03', 2000, 0, 0),
     ]
     const stats = aggregate(days, start, end, 21)
 
     expect(stats.daysLogged).toBe(3)
+    expect(stats.mean.fiber_g).toBeCloseTo(13.33, 2)
+    expect(stats.total.fiber_g).toBe(40)
+    // Two of the three days recorded fiber on every entry, so the mean is a
+    // floor rather than a measurement and the UI has to say so.
     expect(stats.fiberDaysKnown).toBe(2)
-    expect(stats.mean.fiber_g).toBe(20)
     // Calories are unaffected -- all three days recorded those.
     expect(stats.mean.calories).toBe(2000)
   })
 
-  it('reports fiber as unknown when no day recorded it', () => {
-    const days = [withFiber('2026-03-01', 2000, null), withFiber('2026-03-02', 2000, null)]
+  it('still reports a figure when no day recorded any fiber', () => {
+    const days = [
+      withFiber('2026-03-01', 2000, 0, 0),
+      withFiber('2026-03-02', 2000, 0, 0),
+    ]
     const stats = aggregate(days, start, end, 21)
 
     expect(stats.fiberDaysKnown).toBe(0)
-    expect(stats.mean.fiber_g).toBeNull()
-    expect(stats.median.fiber_g).toBeNull()
-    expect(stats.total.fiber_g).toBeNull()
+    expect(stats.mean.fiber_g).toBe(0)
+    expect(stats.total.fiber_g).toBe(0)
   })
 
-  it('keeps a recorded zero distinct from unrecorded', () => {
-    const stats = aggregate([withFiber('2026-03-01', 2000, 0)], start, end, 21)
-    expect(stats.fiberDaysKnown).toBe(1)
-    expect(stats.mean.fiber_g).toBe(0)
+  it('counts a day fully covered only when every entry recorded fiber', () => {
+    // The real case: six entries, two carrying fiber. 21 g is real and must
+    // show, but the day is not fully covered.
+    const partial = { ...day('2026-03-01', 2027), fiber_g: 21, entry_count: 6, fiber_entry_count: 2 }
+    const stats = aggregate([partial], start, end, 21)
+    expect(stats.total.fiber_g).toBe(21)
+    expect(stats.fiberDaysKnown).toBe(0)
   })
 })
 
 describe('summing a day of entries', () => {
-  it('marks the day unknown when any entry lacks fiber', () => {
+  it('sums the fiber that was recorded and reports the coverage', () => {
     const total = sumNutrition([
       { calories: 100, fiber_g: 3 },
       { calories: 200, fiber_g: null },
     ])
     expect(total.calories).toBe(300)
-    expect(total.fiber_g).toBeNull()
+    // The 3 g is real and shows; the caller says it covers 1 of 2 entries.
+    expect(total.fiber_g).toBe(3)
+    expect(total.fiberEntryCount).toBe(1)
   })
 
   it('sums fiber when every entry recorded it', () => {
@@ -282,6 +302,13 @@ describe('summing a day of entries', () => {
       { calories: 200, fiber_g: 4 },
     ])
     expect(total.fiber_g).toBe(7)
+    expect(total.fiberEntryCount).toBe(2)
+  })
+
+  it('reports no coverage when nothing recorded fiber', () => {
+    const total = sumNutrition([{ calories: 100, fiber_g: null }])
+    expect(total.fiber_g).toBe(0)
+    expect(total.fiberEntryCount).toBe(0)
   })
 })
 

@@ -1,4 +1,4 @@
-import { formatMetric, NOT_RECORDED } from '../lib/format'
+import { formatMetric, NOT_RECORDED, pluralize } from '../lib/format'
 import {
   METRIC_LABELS,
   METRIC_UNITS,
@@ -12,9 +12,12 @@ import {
 interface Props {
   totals: NutritionInput
   target: Target | null
+  /** Entries logged today, and how many of them recorded fiber. */
+  entryCount?: number
+  fiberEntryCount?: number
 }
 
-export function TargetProgress({ totals, target }: Props) {
+export function TargetProgress({ totals, target, entryCount, fiberEntryCount }: Props) {
   if (!target) {
     return (
       <div className="notice">
@@ -70,6 +73,19 @@ export function TargetProgress({ totals, target }: Props) {
             {unknown ? (
               <div className="sub" style={{ marginTop: 4 }}>
                 Not recorded for every entry today.
+              </div>
+            ) : null}
+            {/* A fiber total covering some of the day is a floor, not a
+                measurement. Showing it beats withholding it -- that is what
+                hid 21 real grams behind a dash -- but it has to say so. */}
+            {metric === 'fiber_g' &&
+            !unknown &&
+            entryCount !== undefined &&
+            fiberEntryCount !== undefined &&
+            fiberEntryCount < entryCount ? (
+              <div className="sub" style={{ marginTop: 4 }}>
+                At least this much: {fiberEntryCount} of {entryCount}{' '}
+                {pluralize(entryCount, 'entry', 'entries')} recorded fiber.
               </div>
             ) : null}
             {ceiling ? (

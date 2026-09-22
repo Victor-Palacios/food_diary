@@ -82,7 +82,12 @@ export function TodayPage() {
       </div>
 
       <div className="card">
-        <TargetProgress totals={totals} target={target} />
+        <TargetProgress
+          totals={totals}
+          target={target}
+          entryCount={entries.length}
+          fiberEntryCount={totals.fiberEntryCount}
+        />
       </div>
 
       <h2>

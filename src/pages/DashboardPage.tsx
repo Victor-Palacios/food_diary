@@ -4,7 +4,7 @@ import { IconBack, IconForward } from '../components/Icons'
 import * as api from '../lib/api'
 import { useAppData } from '../lib/AppData'
 import { aggregate, byDate, type Aggregate } from '../lib/stats'
-import { formatCalories, formatMean, formatOptional } from '../lib/format'
+import { formatCalories, formatMean, formatOptional, pluralize } from '../lib/format'
 import { BLOCK_DAYS } from '../lib/config'
 import {
   addDays,
@@ -278,17 +278,21 @@ function BlockView({
                 <tbody>
                   {METRICS.map((metric) => (
                     <tr key={metric}>
-                      <td>{METRIC_LABELS[metric]}</td>
                       <td>
-                        {stats.mean[metric] === null
-                          ? '—'
-                          : formatMean(metric, stats.mean[metric] as number)}
+                        {METRIC_LABELS[metric]}
+                        {/* Fiber counts an unrecorded entry as zero so the
+                            figure is visible at all. Where that applies to
+                            some of the block it is a floor, and the column
+                            says which days it is fully based on. */}
+                        {metric === 'fiber_g' && stats.fiberDaysKnown < stats.daysLogged ? (
+                          <div className="sub">
+                            at least — fully recorded on {stats.fiberDaysKnown} of{' '}
+                            {stats.daysLogged} {pluralize(stats.daysLogged, 'day')}
+                          </div>
+                        ) : null}
                       </td>
-                      <td>
-                        {stats.median[metric] === null
-                          ? '—'
-                          : formatMean(metric, stats.median[metric] as number)}
-                      </td>
+                      <td>{formatMean(metric, stats.mean[metric])}</td>
+                      <td>{formatMean(metric, stats.median[metric])}</td>
                     </tr>
                   ))}
                 </tbody>
