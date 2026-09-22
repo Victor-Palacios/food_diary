@@ -388,9 +388,13 @@ export function transcribeLocally(description: string): Final | null {
   const stated = readStatedValues(description)
   if (!isTranscription(stated)) return null
 
-  const absent = (['fat_sat_g', 'fat_trans_g'] as const).filter(
-    (k) => stated[k] === undefined,
-  )
+  // Named as a person would say them: this line is read in the review sheet,
+  // not in a log.
+  const OPTIONAL: Array<[keyof StatedValues, string]> = [
+    ['fat_sat_g', 'saturated fat'],
+    ['fat_trans_g', 'trans fat'],
+  ]
+  const absent = OPTIONAL.filter(([k]) => stated[k] === undefined).map(([, label]) => label)
 
   return {
     ok: true,
@@ -409,7 +413,8 @@ export function transcribeLocally(description: string): Final | null {
         fiber_g: stated.fiber_g ?? null,
       },
       notes: absent.length
-        ? `Read straight from your text. ${absent.join(' and ')} were not stated, recorded as 0.`
+        ? `Read straight from your text. You did not mention ` +
+          `${absent.join(' or ')}, so ${absent.length > 1 ? 'those are' : 'that is'} recorded as 0.`
         : 'Read straight from your text.',
     },
   }

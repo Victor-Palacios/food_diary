@@ -320,10 +320,24 @@ This is for the Grass Fed Bison Meatloaf.`
     const notes = String(
       (transcribeLocally(BISON) as { ok: true; result: Record<string, unknown> }).result.notes,
     )
-    expect(notes).toMatch(/fat_sat_g/)
-    expect(notes).toMatch(/fat_trans_g/)
+    expect(notes).toMatch(/saturated fat/)
+    expect(notes).toMatch(/trans fat/)
+    // This line is read in the review sheet, so it names metrics the way a
+    // person says them rather than the way the payload spells them.
+    expect(notes).not.toMatch(/_g\b/)
     // Fiber was stated here, so it must not be listed as filled in.
     expect(notes).not.toMatch(/fiber/)
+  })
+
+  it('names one missing metric in the singular', () => {
+    const notes = String(
+      (
+        transcribeLocally(
+          'Chicken bowl, 630 cal, 45g protein, 60g carbs, 22g fat, 0g trans fat',
+        ) as { ok: true; result: Record<string, unknown> }
+      ).result.notes,
+    )
+    expect(notes).toMatch(/did not mention saturated fat, so that is recorded as 0/)
   })
 
   it('leaves unstated fiber unrecorded, not zero', () => {
