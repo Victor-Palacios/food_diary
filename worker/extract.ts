@@ -91,7 +91,7 @@ const MIN_ATTEMPT_MS = 8_000
  * handful of meals a day that is negligible, and a 70s wait on a phone is
  * not.
  */
-const HEDGE_AFTER_MS = 15_000
+const HEDGE_SCHEDULE_MS = [15_000, 35_000]
 
 const LABEL_PROMPT = `You are reading a printed nutrition facts panel from a photograph.
 
@@ -818,13 +818,16 @@ async function hedge(
   model: string,
   kind: string,
 ): Promise<Response> {
-  // Each attempt carries its own controller so the LOSER can be cancelled
+  // Each attempt carries its own controller so the LOSERS can be cancelled
   // without touching the winner -- aborting the winner would tear down the
   // response before its body is read.
   interface Attempt {
     controller: AbortController
     promise: Promise<Response>
   }
+
+  const attempts: Attempt[] = []
+  const startedAt = Date.now()
 
   const start = (): Attempt => {
     const controller = new AbortController()
@@ -833,44 +836,66 @@ async function hedge(
     // Nothing may be listening if this one loses the race; without a no-op
     // handler that becomes an unhandled rejection.
     promise.catch(() => {})
-    return { controller, promise }
+    const attempt = { controller, promise }
+    attempts.push(attempt)
+    return attempt
   }
 
-  const first = start()
-
-  // Nothing to hedge against if the budget is nearly spent anyway.
-  if (timeoutMs <= HEDGE_AFTER_MS + MIN_ATTEMPT_MS) return first.promise
-
-  const HEDGE = Symbol('hedge')
-  const raced = await Promise.race([
-    first.promise.then((r) => ({ ok: r })).catch((e: unknown) => ({ err: e })),
-    new Promise<typeof HEDGE>((resolve) => setTimeout(() => resolve(HEDGE), HEDGE_AFTER_MS)),
-  ])
-
-  if (raced !== HEDGE) {
-    if ('ok' in raced) return raced.ok
-    throw raced.err
+  const settle = (winner: Attempt | null) => {
+    for (const a of attempts) if (a !== winner) a.controller.abort()
   }
 
-  console.log(`NVIDIA ${kind} via ${model}: slow past ${HEDGE_AFTER_MS}ms, hedging`)
-  const second = start()
+  start()
 
-  // Tag each attempt so the winner is identifiable and only the other one
-  // gets cancelled. Promise.any resolves on the first SUCCESS, so a single
-  // failing attempt does not sink the other.
-  const tagged = [first, second].map((a) =>
-    a.promise.then((response) => ({ response, attempt: a })),
-  )
+  // Fire further attempts on a schedule while none has answered. One extra
+  // was not enough in practice: a request slow enough to hedge is slow
+  // because NVIDIA is queueing, and the hedge can land in the same queue.
+  // A second one at 35s makes three independent chances at the normal few
+  // seconds, which is what actually collapses the tail.
+  const deadlines = HEDGE_SCHEDULE_MS.filter((at) => at + MIN_ATTEMPT_MS < timeoutMs)
+
+  for (const at of deadlines) {
+    const HEDGE = Symbol('hedge')
+    const raced = await Promise.race([
+      // Promise.any resolves on the first SUCCESS, so one attempt failing
+      // does not sink the others; it rejects only if all of them fail.
+      Promise.any(attempts.map((a) => a.promise.then((response) => ({ response, a }))))
+        .then((w) => ({ won: w }))
+        .catch((e: unknown) => ({ err: e })),
+      new Promise<typeof HEDGE>((resolve) =>
+        setTimeout(() => resolve(HEDGE), Math.max(0, at - (Date.now() - startedAt))),
+      ),
+    ])
+
+    if (raced !== HEDGE) {
+      if ('won' in raced) {
+        settle(raced.won.a)
+        return raced.won.response
+      }
+      settle(null)
+      throw unwrap(raced.err)
+    }
+
+    console.log(
+      `NVIDIA ${kind} via ${model}: no answer by ${at}ms, attempt ${attempts.length + 1}`,
+    )
+    start()
+  }
 
   try {
-    const winner = await Promise.any(tagged)
-    for (const a of [first, second]) if (a !== winner.attempt) a.controller.abort()
+    const winner = await Promise.any(
+      attempts.map((a) => a.promise.then((response) => ({ response, a }))),
+    )
+    settle(winner.a)
     return winner.response
   } catch (e) {
-    first.controller.abort()
-    second.controller.abort()
-    throw e instanceof AggregateError ? (e.errors[0] ?? e) : e
+    settle(null)
+    throw unwrap(e)
   }
+}
+
+function unwrap(e: unknown): unknown {
+  return e instanceof AggregateError ? (e.errors[0] ?? e) : e
 }
 
 function tryParse(source: string): Record<string, unknown> | null {

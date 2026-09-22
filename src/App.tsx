@@ -1,5 +1,6 @@
 import { BrowserRouter, NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { AuthGate } from './components/AuthGate'
+import { UpdateBanner } from './components/UpdateBanner'
 import { AppDataProvider, useAppData } from './lib/AppData'
 import { TodayPage } from './pages/TodayPage'
 import { FoodsPage } from './pages/FoodsPage'
@@ -30,13 +31,16 @@ export default function App() {
   if (CONFIG_ERROR) return <ConfigError message={CONFIG_ERROR} />
 
   return (
-    <AuthGate>
-      <AppDataProvider>
-        <BrowserRouter>
-          <Shell />
-        </BrowserRouter>
-      </AppDataProvider>
-    </AuthGate>
+    <>
+      <UpdateBanner />
+      <AuthGate>
+        <AppDataProvider>
+          <BrowserRouter>
+            <Shell />
+          </BrowserRouter>
+        </AppDataProvider>
+      </AuthGate>
+    </>
   )
 }
 

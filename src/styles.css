@@ -905,6 +905,36 @@ tr.unlogged td:first-child {
   color: var(--info);
 }
 
+/* Running-an-old-build warning. Fixed to the top and above the sheet, since
+   a stale bundle is exactly what makes everything else behave oddly. */
+.update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: calc(10px + var(--safe-top)) 14px 10px;
+  background: var(--warn);
+  color: #201700;
+  font-size: 13.5px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.update-banner .sub {
+  color: #4a3800;
+  font-size: 12px;
+}
+
+.update-banner .btn {
+  background: #201700;
+  border-color: #201700;
+  color: var(--warn);
+  flex-shrink: 0;
+}
+
 /* --------------------------------------------------------------------------
    Misc
    -------------------------------------------------------------------------- */
