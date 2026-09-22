@@ -59,13 +59,12 @@ function coerceEntry(row: Record<string, unknown>): LogEntry {
 function coerceDaily(row: Record<string, unknown>): DailyTotals {
   const out = { ...row } as Record<string, unknown>
   for (const metric of METRICS) {
-    // Fiber is a plain number on a day total, unlike on a food or an entry:
-    // the view sums what was recorded and counts the rest as zero, so there
-    // is always a figure to show, and fiber_entry_count below says how much
-    // of the day it covers. num() also means a view predating migration
-    // 0003 -- which returned NULL for a partly-recorded day -- reads as 0
-    // rather than breaking the typing.
-    out[metric] = num(row[metric])
+    // A day total's fiber sums what was recorded and counts the rest as
+    // zero, so post-0003 it is always a number. NULL is preserved rather
+    // than coerced because a pre-0003 view sends it for a partly-recorded
+    // day, and reading that as 0 would assert a zero on a day with 21 g in
+    // it. aggregate() tells those two cases apart.
+    out[metric] = metric === 'fiber_g' ? numOrNull(row[metric]) : num(row[metric])
   }
   out.entry_count = num(row.entry_count)
   out.fiber_entry_count = num(row.fiber_entry_count)

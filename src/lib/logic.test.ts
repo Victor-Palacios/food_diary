@@ -274,6 +274,39 @@ describe('fiber may be unrecorded', () => {
     expect(stats.total.fiber_g).toBe(0)
   })
 
+  it('shows a dash, not a zero, when the view predates migration 0003', () => {
+    // The old view sent NULL for a partly-recorded day and withheld the sum,
+    // so the real figure is not in the response. Reading that NULL as 0 put
+    // "Fiber 0 g" on the dashboard for a day with 21 g in it -- a worse lie
+    // than the dash it replaced.
+    const stale = {
+      ...day('2026-03-01', 2027),
+      fiber_g: null as unknown as number,
+      entry_count: 6,
+      fiber_entry_count: 2,
+    }
+    const stats = aggregate([stale], start, end, 21)
+    expect(stats.fiberUnavailable).toBe(true)
+    expect(stats.mean.fiber_g).toBeNull()
+    expect(stats.total.fiber_g).toBeNull()
+    // Everything else still reports normally.
+    expect(stats.mean.calories).toBe(2027)
+  })
+
+  it('reads a day that genuinely recorded no fiber as zero, not unavailable', () => {
+    // The old view also sent NULL here, but with no entries carrying fiber
+    // the true total is 0, so there is nothing ambiguous to withhold.
+    const none = {
+      ...day('2026-03-01', 2000),
+      fiber_g: null as unknown as number,
+      entry_count: 3,
+      fiber_entry_count: 0,
+    }
+    const stats = aggregate([none], start, end, 21)
+    expect(stats.fiberUnavailable).toBe(false)
+    expect(stats.total.fiber_g).toBe(0)
+  })
+
   it('counts a day fully covered only when every entry recorded fiber', () => {
     // The real case: six entries, two carrying fiber. 21 g is real and must
     // show, but the day is not fully covered.

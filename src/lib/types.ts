@@ -122,13 +122,18 @@ export interface LogEntry extends NutritionInput {
 /**
  * One logged day, as the `daily_totals` view reports it.
  *
- * Fiber is a plain number here, unlike everywhere a value is entered: the view
- * sums the entries that recorded it and counts the rest as zero, so the figure
- * is always showable. `fiber_entry_count` against `entry_count` is what makes
- * it honest -- it is the difference between "ate 21 g" and "ate at least 21 g".
+ * Fiber here sums the entries that recorded it and counts the rest as zero, so
+ * there is normally always a figure to show. `fiber_entry_count` against
+ * `entry_count` is what keeps that honest -- it is the difference between "ate
+ * 21 g" and "ate at least 21 g".
  */
 export interface DailyTotals extends Omit<NutritionInput, OptionalMetric> {
-  fiber_g: number
+  /**
+   * The fiber that was recorded that day, with unrecorded entries counted as
+   * zero. NULL only from a `daily_totals` view predating migration 0003,
+   * which withheld the sum for a partly-recorded day.
+   */
+  fiber_g: number | null
   owner_id: string
   eaten_on: string
   entry_count: number

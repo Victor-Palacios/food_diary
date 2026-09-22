@@ -28,12 +28,6 @@ export function formatCalories(value: number): string {
   return Math.round(value).toLocaleString('en-US')
 }
 
-/** One decimal, for means that would otherwise look falsely precise. */
-export function formatMean(metric: Metric, value: number): string {
-  if (metric === 'calories') return Math.round(value).toLocaleString('en-US')
-  return formatGrams(value)
-}
-
 const VULGAR: Record<string, string> = {
   '0.25': '¼',
   '0.5': '½',

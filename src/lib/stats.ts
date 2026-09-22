@@ -18,12 +18,12 @@ export interface Aggregate {
   daysLogged: number
   /** Total days in the window, logged or not. */
   daysInWindow: number
-  /** Mean per LOGGED day. */
-  mean: Nutrition
+  /** Mean per LOGGED day. Fiber is null only if the view predates 0003. */
+  mean: NutritionInput
   /** Median per LOGGED day. */
-  median: Nutrition
+  median: NutritionInput
   /** Sum across logged days. Meaningful for a single day, not for a range. */
-  total: Nutrition
+  total: NutritionInput
   /**
    * Logged days where every entry recorded fiber.
    *
@@ -33,6 +33,16 @@ export interface Aggregate {
    * mean and a floor -- the UI reports it next to the number.
    */
   fiberDaysKnown: number
+  /**
+   * True when `daily_totals` is still the pre-0003 view, which reports NULL
+   * for a day that recorded fiber on only some entries. The real sum is not
+   * in the response at all, so the figure is genuinely unavailable and the UI
+   * shows a dash: coercing that NULL to 0 would claim a zero on a day with
+   * 21 g in it, which is the exact confusion this change set out to fix.
+   *
+   * Goes false by itself once the migration is applied.
+   */
+  fiberUnavailable: boolean
 }
 
 export function mean(values: number[]): number {
@@ -75,6 +85,14 @@ export function aggregate(
   // read as "at least this much" where that is what it means.
   const fiberDays = inWindow.filter((d) => d.fiber_entry_count >= d.entry_count)
 
+  // A NULL day fiber alongside entries that did record some means the old
+  // view is still in place: it withheld the partial sum, so the number is not
+  // recoverable from this response. A day where nothing recorded fiber is
+  // NULL there too, but its true total is 0, so it is not ambiguous.
+  const fiberUnavailable = inWindow.some(
+    (d) => (d.fiber_g === null || d.fiber_g === undefined) && d.fiber_entry_count > 0,
+  )
+
   const result: Aggregate = {
     daysLogged: inWindow.length,
     daysInWindow,
@@ -82,9 +100,17 @@ export function aggregate(
     median: { ...ZERO_NUTRITION },
     total: { ...ZERO_NUTRITION },
     fiberDaysKnown: fiberDays.length,
+    fiberUnavailable,
   }
 
   for (const metric of METRICS) {
+    if (metric === 'fiber_g' && fiberUnavailable) {
+      result.mean.fiber_g = null
+      result.median.fiber_g = null
+      result.total.fiber_g = null
+      continue
+    }
+
     const values = inWindow.map((d) => Number(d[metric]) || 0)
 
     result.mean[metric] = mean(values)

@@ -4,7 +4,7 @@ import { IconBack, IconForward } from '../components/Icons'
 import * as api from '../lib/api'
 import { useAppData } from '../lib/AppData'
 import { aggregate, byDate, type Aggregate } from '../lib/stats'
-import { formatCalories, formatMean, formatOptional, pluralize } from '../lib/format'
+import { formatCalories, formatOptional, pluralize } from '../lib/format'
 import { BLOCK_DAYS } from '../lib/config'
 import {
   addDays,
@@ -284,15 +284,18 @@ function BlockView({
                             figure is visible at all. Where that applies to
                             some of the block it is a floor, and the column
                             says which days it is fully based on. */}
-                        {metric === 'fiber_g' && stats.fiberDaysKnown < stats.daysLogged ? (
+                        {metric === 'fiber_g' && stats.fiberUnavailable ? (
+                          <div className="sub">needs migration 0003</div>
+                        ) : metric === 'fiber_g' &&
+                          stats.fiberDaysKnown < stats.daysLogged ? (
                           <div className="sub">
                             at least — fully recorded on {stats.fiberDaysKnown} of{' '}
                             {stats.daysLogged} {pluralize(stats.daysLogged, 'day')}
                           </div>
                         ) : null}
                       </td>
-                      <td>{formatMean(metric, stats.mean[metric])}</td>
-                      <td>{formatMean(metric, stats.median[metric])}</td>
+                      <td>{formatOptional(metric, stats.mean[metric])}</td>
+                      <td>{formatOptional(metric, stats.median[metric])}</td>
                     </tr>
                   ))}
                 </tbody>
