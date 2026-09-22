@@ -115,6 +115,19 @@ export function DashboardPage() {
 
       {error ? <div className="notice error">{error}</div> : null}
 
+      {/* Explains the fiber dashes rather than leaving them mysterious. The
+          view still withholds a partly-recorded day's sum, so the figure is
+          not in the response at all -- printing 0 would claim a zero on a
+          day that has fiber in it. Disappears once the migration is run. */}
+      {stats.fiberUnavailable ? (
+        <div className="notice">
+          Fiber totals are unavailable here until the database view is updated.
+          Run <code>supabase/migrations/0003_fiber_totals_count_known.sql</code> in
+          the Supabase SQL editor. Today&rsquo;s screen already shows fiber
+          correctly — it adds the entries up itself.
+        </div>
+      ) : null}
+
       {loading ? (
         <div className="spinner" />
       ) : (
