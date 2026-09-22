@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isTranscription, parseJsonObject, readStatedValues } from './extract'
+import { isTranscription, parseJsonObject, parseLooseReply, readStatedValues } from './extract'
 
 /**
  * A model is not a parser. These are the reply shapes that actually turn up:
@@ -181,5 +181,76 @@ This is for the Grass Fed Bison Meatloaf.`)
   it('reads decimals', () => {
     const stated = readStatedValues('120 cal, 24g protein, 3g carbs, 1.5g fat')
     expect(stated.fat_total_g).toBe(1.5)
+  })
+})
+
+/**
+ * Smaller vision models ignore the JSON instruction and answer in markdown.
+ * Rejecting that told the user "could not read a result" while the numbers
+ * sat in plain view in the very same reply, so it is parsed instead.
+ *
+ * The text below is what the 11B vision model actually returned in use.
+ */
+describe('reading a markdown reply', () => {
+  const REAL = `**Nutrition Estimate for Organic Butter Bean Soup**
+* **Name:** Organic Butter Bean Soup with Leeks, Organic Free-Range Chicken, and Smoked 5 Seed Crunch
+* **Serving Label:** 1 plate as shown
+* **Nutrition:**
+  * Calories: 671
+  * Protein: 51g
+  * Carbs: 38g
+  * Fat Total: 35g`
+
+  it('recovers the values a real reply carried', () => {
+    const out = parseLooseReply(REAL)
+    expect(out).not.toBeNull()
+    const n = out!.nutrition as Record<string, unknown>
+    expect(n.calories).toBe(671)
+    expect(n.protein_g).toBe(51)
+    expect(n.carbs_g).toBe(38)
+    expect(n.fat_total_g).toBe(35)
+  })
+
+  it('keeps the full dish name and serving', () => {
+    const out = parseLooseReply(REAL)
+    expect(out!.name).toBe(
+      'Organic Butter Bean Soup with Leeks, Organic Free-Range Chicken, and Smoked 5 Seed Crunch',
+    )
+    expect(out!.serving_label).toBe('1 plate as shown')
+  })
+
+  it('leaves unstated fiber unrecorded rather than zero', () => {
+    const n = parseLooseReply(REAL)!.nutrition as Record<string, unknown>
+    expect(n.fiber_g).toBeNull()
+    // Sat and trans fat genuinely default to 0; only fiber is optional.
+    expect(n.fat_sat_g).toBe(0)
+  })
+
+  it('marks it an estimate, since the format was not followed either', () => {
+    expect(parseLooseReply(REAL)!.estimated).toBe(true)
+  })
+
+  it('refuses a reply with no calorie figure', () => {
+    expect(parseLooseReply('I could not identify the food in this photo.')).toBeNull()
+  })
+
+  it('reads a label written with words between it and the number', () => {
+    const stated = readStatedValues('Calories (per serving): 671\nFat Total: 35g')
+    expect(stated.calories).toBe(671)
+    expect(stated.fat_total_g).toBe(35)
+  })
+})
+
+describe('metric labels never bind across a line break', () => {
+  it('does not read the previous line\'s number as this line\'s metric', () => {
+    // Without a newline guard, "671\nFat" matched and fat became 671.
+    const stated = readStatedValues('Calories: 671\nFat Total: 35g')
+    expect(stated.calories).toBe(671)
+    expect(stated.fat_total_g).toBe(35)
+  })
+
+  it('still reads a number and label on the same line', () => {
+    expect(readStatedValues('47g protein').protein_g).toBe(47)
+    expect(readStatedValues('47 g of protein').protein_g).toBe(47)
   })
 })

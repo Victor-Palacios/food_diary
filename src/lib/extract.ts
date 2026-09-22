@@ -106,6 +106,43 @@ export async function extractFromText(text: string): Promise<ExtractResult> {
 }
 
 async function post(request: Record<string, unknown>): Promise<ExtractResult> {
+  try {
+    return await postStreaming(request)
+  } catch (e) {
+    // iOS Safari reports a dropped connection as a bare "Load failed", and a
+    // long-lived streamed response is exactly what it drops. Retrying without
+    // the stream gives up the five-minute ceiling but usually succeeds -- and
+    // since slow calls are now hedged server-side, the buffered budget is
+    // almost always enough.
+    if (e instanceof ExtractUnavailable || !isNetworkFailure(e)) throw e
+    return postBuffered(request)
+  }
+}
+
+/** A transport failure, as opposed to the server reporting a problem. */
+function isNetworkFailure(e: unknown): boolean {
+  if (!(e instanceof Error)) return false
+  return (
+    e instanceof TypeError ||
+    /load failed|network|fetch|connection|aborted|stream/i.test(e.message)
+  )
+}
+
+async function postBuffered(request: Record<string, unknown>): Promise<ExtractResult> {
+  const response = await fetch('/api/extract', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (response.status === 501) {
+    throw new ExtractUnavailable('AI extraction is not configured on this deployment.')
+  }
+  const payload: unknown = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(errorFrom(payload, response.status))
+  return normalize(payload)
+}
+
+async function postStreaming(request: Record<string, unknown>): Promise<ExtractResult> {
   const response = await fetch('/api/extract', {
     method: 'POST',
     headers: {

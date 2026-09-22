@@ -401,7 +401,8 @@ async function runExtraction(
 
   if (result.failure) return { ok: false, ...result.failure }
 
-  const parsed = parseJsonObject(result.content ?? '')
+  const parsed =
+    parseJsonObject(result.content ?? '') ?? parseLooseReply(result.content ?? '')
   if (!parsed) {
     // Log the whole reply: when this fires, the reply is the only evidence
     // of why, and guessing at it costs far more than the log line.
@@ -614,6 +615,45 @@ async function callModel(
  * on any of those means telling the user "could not read a result" when the
  * numbers were right there, so each case is handled rather than rejected.
  */
+/**
+ * Reads a reply that ignored the JSON instruction entirely.
+ *
+ * Smaller vision models routinely answer in markdown -- "**Name:** ...",
+ * "* Calories: 671" -- and rejecting that told the user "could not read a
+ * result" while the numbers sat in plain view in the very same message. The
+ * values are recoverable, so recover them.
+ */
+export function parseLooseReply(text: string): Record<string, unknown> | null {
+  const stated = readStatedValues(text)
+  // Calories anchor the whole thing; without them there is no result worth
+  // prefilling, only a guess about what the model meant.
+  if (stated.calories === undefined) return null
+
+  const field = (label: string): string | undefined => {
+    const m = new RegExp(`\\*{0,2}${label}\\*{0,2}\\s*[:=]\\s*\\*{0,2}\\s*([^\\n*]+)`, 'i').exec(text)
+    return m?.[1]?.trim() || undefined
+  }
+
+  return {
+    name: field('name') ?? '',
+    serving_label: field('serving[ _]?label') ?? field('serving') ?? '1 serving',
+    // A model that would not follow the output format was not tracking the
+    // transcribe-versus-estimate rule either. Treat it as an estimate; the
+    // caller overrides that when the user's own text supplied the figures.
+    estimated: true,
+    nutrition: {
+      calories: stated.calories,
+      protein_g: stated.protein_g ?? 0,
+      carbs_g: stated.carbs_g ?? 0,
+      fat_total_g: stated.fat_total_g ?? 0,
+      fat_sat_g: stated.fat_sat_g ?? 0,
+      fat_trans_g: stated.fat_trans_g ?? 0,
+      fiber_g: stated.fiber_g ?? null,
+    },
+    notes: 'Read from an unstructured reply — check every value.',
+  }
+}
+
 export function parseJsonObject(text: string): Record<string, unknown> | null {
   let candidate = stripReasoning(text)
 
@@ -721,11 +761,24 @@ export function readStatedValues(text: string): StatedValues {
 
   for (const [key, words] of METRIC_WORDS) {
     // "47 g protein" / "47g of protein"
-    const before = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:g|grams?|kcals?|cals?)?\\s*(?:of\\s+)?(?:${words})\\b`, 'i')
+    // [^\S\n] is "whitespace but not a newline". Plain \s* would let a
+    // number ending one line bind to a label starting the next, so
+    // "Calories: 671\nFat Total: 35g" recorded fat as 671.
+    const before = new RegExp(
+      `(\\d+(?:\\.\\d+)?)[^\\S\\n]*(?:g|grams?|kcals?|cals?)?[^\\S\\n]*(?:of[^\\S\\n]+)?(?:${words})\\b`,
+      'i',
+    )
     // "protein: 47g" / "protein 47 g"
     const after = new RegExp(`\\b(?:${words})\\b\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)`, 'i')
+    // "Fat Total: 35g" / "Calories (per serving): 671" -- a few words may sit
+    // between the label and the colon. Kept on one line so it cannot reach
+    // across into a different metric's value.
+    const loose = new RegExp(
+      `\\b(?:${words})\\b[^:\\n\\d]{0,18}[:=]\\s*\\**\\s*(\\d+(?:\\.\\d+)?)`,
+      'i',
+    )
 
-    const m = before.exec(remaining) ?? after.exec(remaining)
+    const m = before.exec(remaining) ?? after.exec(remaining) ?? loose.exec(remaining)
     if (!m) continue
 
     const value = Number(m[1])
