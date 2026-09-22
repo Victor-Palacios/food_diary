@@ -1,4 +1,5 @@
 import { handleExtract } from './extract'
+import { handleDiag } from './diag'
 import { json, type Env } from './shared'
 
 export type { Env }
@@ -18,12 +19,20 @@ export default {
       return withSecurityHeaders(await handleExtract(request, env, ctx))
     }
 
+    // Diagnostic: which models actually answer for this key. See diag.ts.
+    if (url.pathname === '/api/diag') {
+      return withSecurityHeaders(await handleDiag(env))
+    }
+
     if (url.pathname === '/api/health') {
       return json({
         ok: true,
         // Lets the client hide the photo buttons when Phase 2 is not wired up,
         // rather than offering an action that always fails.
         extraction: Boolean(env.NVIDIA_API_KEY),
+        // Named here so a wrong model is visible without reading logs.
+        textModel: env.NVIDIA_TEXT_MODEL ?? '(default)',
+        visionModel: env.NVIDIA_MODEL ?? '(default)',
       })
     }
 
