@@ -43,13 +43,13 @@ const MAX_TEXT_CHARS = 600
 const DEFAULT_VISION_MODEL = 'meta/llama-3.2-90b-vision-instruct'
 
 /**
- * A dense 70B. The small mixture-of-experts model tried first was cheaper and
- * faster but could not reliably turn a bulleted list of macros into the JSON
- * this endpoint promises -- and a wrong or unparseable answer costs far more
- * than a few extra seconds. Accuracy wins here; the 85s budget absorbs the
- * latency.
+ * Chosen by probing the API (/api/diag), not by reading the catalog.
+ *
+ * Being listed in /v1/models does not mean a model is callable with a given
+ * key: two plausible Nemotron ids return 404, and the 90B vision model does
+ * not respond at all. This one answers in roughly 350ms.
  */
-const DEFAULT_TEXT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct'
+const DEFAULT_TEXT_MODEL = 'google/gemma-4-31b-it'
 
 /**
  * Total wall-clock budget for the upstream work, shared across a retry.

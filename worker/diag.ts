@@ -13,16 +13,26 @@ import { json, type Env } from './shared'
  * sequentially. It is a diagnostic, not a feature, and can be deleted once
  * the model choice is settled.
  */
-const CANDIDATES = [
-  'nvidia/llama-3.1-nemotron-70b-instruct',
-  'nvidia/nemotron-3.5-lightning-30b-a3b',
-  'nvidia/nemotron-nano-3-30b-a3b',
+const TEXT_CANDIDATES = [
   'google/gemma-4-31b-it',
-  'google/gemma-3-12b-it',
-  'mistralai/mistral-large-2-instruct',
-  'nv-mistralai/mistral-nemo-12b-instruct',
-  'meta/llama-3.2-90b-vision-instruct',
+  'nvidia/nemotron-3-super-120b-a12b',
+  'z-ai/glm-5.3-flash',
+  'deepseek-ai/deepseek-v4.1-flash',
 ]
+
+/**
+ * Vision candidates get a real (tiny) image, because answering a text prompt
+ * says nothing about whether a model will accept an image_url part.
+ */
+const VISION_CANDIDATES = [
+  'meta/llama-3.2-11b-vision-instruct',
+  'meta/llama-3.2-90b-vision-instruct',
+  'google/gemma-4-31b-it',
+  'microsoft/phi-3-vision-128k-instruct',
+  'nvidia/nemotron-parse-2.0',
+]
+
+const TEST_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAS0lEQVR42u3PQQkAAAgAsetfWiP4FgYrsKZeS0BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEDgsqnc8OJg6Ln3AAAAAElFTkSuQmCC'
 
 const PER_MODEL_TIMEOUT_MS = 20_000
 
@@ -30,9 +40,27 @@ export async function handleDiag(env: Env): Promise<Response> {
   if (!env.NVIDIA_API_KEY) return json({ error: 'No NVIDIA_API_KEY configured.' }, 501)
 
   const baseUrl = env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1'
+
+  return json({
+    configured: {
+      text: env.NVIDIA_TEXT_MODEL ?? '(default)',
+      vision: env.NVIDIA_MODEL ?? '(default)',
+      baseUrl,
+    },
+    text: await probe(env, baseUrl, TEXT_CANDIDATES, false),
+    vision: await probe(env, baseUrl, VISION_CANDIDATES, true),
+  })
+}
+
+async function probe(
+  env: Env,
+  baseUrl: string,
+  models: string[],
+  withImage: boolean,
+): Promise<Array<Record<string, unknown>>> {
   const results: Array<Record<string, unknown>> = []
 
-  for (const model of CANDIDATES) {
+  for (const model of models) {
     const startedAt = Date.now()
     try {
       const r = await fetch(`${baseUrl}/chat/completions`, {
@@ -44,7 +72,17 @@ export async function handleDiag(env: Env): Promise<Response> {
         },
         body: JSON.stringify({
           model,
-          messages: [{ role: 'user', content: 'Reply with the single word: ok' }],
+          messages: [
+            {
+              role: 'user',
+              content: withImage
+                ? [
+                    { type: 'text', text: 'What colour is this image? One word.' },
+                    { type: 'image_url', image_url: { url: TEST_IMAGE } },
+                  ]
+                : 'Reply with the single word: ok',
+            },
+          ],
           max_tokens: 5,
           temperature: 0,
           stream: false,
@@ -69,12 +107,5 @@ export async function handleDiag(env: Env): Promise<Response> {
     }
   }
 
-  return json({
-    configured: {
-      text: env.NVIDIA_TEXT_MODEL ?? '(default)',
-      vision: env.NVIDIA_MODEL ?? '(default)',
-      baseUrl,
-    },
-    results,
-  })
+  return results
 }

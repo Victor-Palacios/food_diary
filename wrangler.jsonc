@@ -37,10 +37,9 @@
     // If this one goes, the Worker falls back to the vision model and logs
     // the swap, so the feature keeps working until this line is updated.
     //
-    // A dense 70B. A small mixture-of-experts model was tried first for
-    // speed and could not reliably turn a bulleted list of macros into the
-    // JSON this endpoint promises. A wrong or unparseable answer costs more
-    // than a few seconds of waiting, so accuracy wins.
-    "NVIDIA_TEXT_MODEL": "nvidia/llama-3.1-nemotron-70b-instruct"
+    // Chosen by probing (/api/diag), not from the catalog listing: this one
+    // actually answers for this key, in ~350ms. Several plausible ids --
+    // including two Nemotron models -- are listed but return 404.
+    "NVIDIA_TEXT_MODEL": "google/gemma-4-31b-it"
   }
 }
