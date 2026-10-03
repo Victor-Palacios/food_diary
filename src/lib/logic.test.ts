@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { aggregate, mean, median, scale, sumNutrition } from './stats'
 import { addDays, dateRange, daysBetween, endOfMonth, endOfWeek, startOfMonth, startOfWeek } from './dates'
-import { formatMultiplier, parseMultiplier, parseNumber } from './format'
+import { formatMultiplier, formatPercent, parseMultiplier, parseNumber } from './format'
 import type { DailyTotals } from './types'
 
 /**
@@ -28,6 +28,7 @@ function day(date: string, calories: number): DailyTotals {
     fat_trans_g: 0,
     fiber_g: 0,
     has_estimate: false,
+    estimated_calories: 0,
   }
 }
 
@@ -314,6 +315,105 @@ describe('fiber may be unrecorded', () => {
     const stats = aggregate([partial], start, end, 21)
     expect(stats.total.fiber_g).toBe(21)
     expect(stats.fiberDaysKnown).toBe(0)
+  })
+})
+
+/**
+ * The estimate flag was recorded on every entry and then used for nothing but
+ * a label. This is the audit it was recorded for: how much of a block's
+ * calories were guessed, which is what decides how far its mean can be
+ * trusted against a DEXA scan.
+ */
+describe('estimated share of a block', () => {
+  const start = '2026-03-01'
+  const end = '2026-03-21'
+
+  function withEstimate(date: string, calories: number, estimated: number): DailyTotals {
+    return { ...day(date, calories), has_estimate: estimated > 0, estimated_calories: estimated }
+  }
+
+  it('reports the share by calories, not by days', () => {
+    // Both days include an estimate, but one is a 100 kcal snack and the
+    // other an 1,800 kcal dinner. Counting days would call them equal.
+    const days = [
+      withEstimate('2026-03-01', 2000, 100),
+      withEstimate('2026-03-02', 2000, 1800),
+      day('2026-03-03', 2000),
+      day('2026-03-04', 2000),
+    ]
+    const { estimates } = aggregate(days, start, end, 21)
+
+    expect(estimates.days).toBe(2)
+    expect(estimates.calories).toBe(1900)
+    expect(estimates.share).toBeCloseTo(1900 / 8000, 6)
+    expect(estimates.unavailable).toBe(false)
+  })
+
+  it('says none were estimated, rather than nothing, for a fully measured block', () => {
+    const { estimates } = aggregate([day('2026-03-01', 2000), day('2026-03-02', 2100)], start, end, 21)
+    expect(estimates.days).toBe(0)
+    expect(estimates.calories).toBe(0)
+    expect(estimates.share).toBe(0)
+  })
+
+  it('leaves unlogged days out of the share, as it does the mean', () => {
+    // One logged day in 21, entirely estimated: the share is 100% of what was
+    // logged, not 1/21 of a block padded with imaginary measured days.
+    const { estimates } = aggregate([withEstimate('2026-03-05', 1500, 1500)], start, end, 21)
+    expect(estimates.share).toBe(1)
+  })
+
+  it('ignores estimates outside the window', () => {
+    const days = [withEstimate('2026-02-28', 2000, 2000), day('2026-03-01', 2000)]
+    const { estimates } = aggregate(days, start, end, 21)
+    expect(estimates.days).toBe(0)
+    expect(estimates.share).toBe(0)
+  })
+
+  it('has no share to report when nothing with calories was logged', () => {
+    expect(aggregate([], start, end, 21).estimates.share).toBeNull()
+  })
+
+  it('is unavailable, not zero, when the view predates 0004 and a day was estimated', () => {
+    // The old view sends has_estimate and nothing else. Reading the missing
+    // figure as 0 would print "none of these calories were estimated" over a
+    // block that has estimates in it.
+    const stale = { ...day('2026-03-01', 2000), has_estimate: true, estimated_calories: null }
+    const { estimates } = aggregate([stale, day('2026-03-02', 2000)], start, end, 21)
+
+    expect(estimates.unavailable).toBe(true)
+    expect(estimates.calories).toBeNull()
+    expect(estimates.share).toBeNull()
+    // The day count needs only has_estimate, so it survives.
+    expect(estimates.days).toBe(1)
+  })
+
+  it('reports fully before 0004 when no day was estimated', () => {
+    // A day without an estimate has 0 estimated calories on any view, so
+    // there is nothing to withhold and no reason to nag about the migration.
+    const old = { ...day('2026-03-01', 2000), estimated_calories: null }
+    const { estimates } = aggregate([old], start, end, 21)
+
+    expect(estimates.unavailable).toBe(false)
+    expect(estimates.share).toBe(0)
+  })
+})
+
+describe('percentages', () => {
+  it('rounds to a whole percent', () => {
+    expect(formatPercent(0.2375)).toBe('24%')
+    expect(formatPercent(0.5)).toBe('50%')
+  })
+
+  it('never rounds a small share down to zero', () => {
+    // One estimated snack in a 21-day block is a small share, not none.
+    expect(formatPercent(0.003)).toBe('<1%')
+    expect(formatPercent(0)).toBe('0%')
+  })
+
+  it('never rounds a partial share up to all of it', () => {
+    expect(formatPercent(0.997)).toBe('>99%')
+    expect(formatPercent(1)).toBe('100%')
   })
 })
 

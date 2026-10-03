@@ -858,6 +858,16 @@ tr.unlogged td:first-child {
   font-size: 30px;
 }
 
+/* The estimated share sits under a figure, as a note on how far to trust it. */
+.estimate-share {
+  margin-top: 10px;
+  line-height: 1.4;
+}
+
+.estimate-share strong {
+  color: var(--text);
+}
+
 .coverage {
   display: flex;
   align-items: center;
@@ -893,6 +903,11 @@ tr.unlogged td:first-child {
   color: var(--warn);
   margin-bottom: 12px;
   line-height: 1.4;
+}
+
+/* Migration filenames are one unbroken word wider than a phone screen. */
+.notice code {
+  overflow-wrap: anywhere;
 }
 
 .notice.error {

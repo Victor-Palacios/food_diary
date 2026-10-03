@@ -68,6 +68,10 @@ function coerceDaily(row: Record<string, unknown>): DailyTotals {
   }
   out.entry_count = num(row.entry_count)
   out.fiber_entry_count = num(row.fiber_entry_count)
+  // Absent entirely from a pre-0004 view. Kept as null rather than read as 0,
+  // which would report "none of this was estimated" when it simply is not known.
+  out.estimated_calories = numOrNull(row.estimated_calories)
+  out.has_estimate = row.has_estimate === true
   return out as unknown as DailyTotals
 }
 

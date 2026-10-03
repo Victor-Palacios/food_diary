@@ -43,6 +43,37 @@ export interface Aggregate {
    * Goes false by itself once the migration is applied.
    */
   fiberUnavailable: boolean
+  /** How much of the window rests on estimates rather than figures read off something. */
+  estimates: EstimateShare
+}
+
+/**
+ * The audit the estimate flag exists for.
+ *
+ * A block mean is only as good as what went into it. If it disagrees with a
+ * DEXA scan, the first question is how much of it was guesswork, and "5% of
+ * these calories were estimated" and "60%" are very different answers. A count
+ * of days alone cannot tell those apart: one estimated banana flags a day as
+ * surely as an estimated restaurant dinner. So the share is by calories, with
+ * the day count alongside it.
+ */
+export interface EstimateShare {
+  /** Logged days with at least one estimated entry. */
+  days: number
+  /** Calories from estimated entries. Null when the view predates 0004. */
+  calories: number | null
+  /**
+   * `calories` as a fraction (0-1) of all calories in the window. Null when
+   * that is unknown, or when nothing with calories was logged.
+   */
+  share: number | null
+  /**
+   * True when `daily_totals` predates 0004 and a day did include an estimate,
+   * so its estimated calories are not in the response. A day with no estimate
+   * is unambiguous on any view -- its estimated calories are 0 -- so a window
+   * without estimates reports fully even before the migration.
+   */
+  unavailable: boolean
 }
 
 export function mean(values: number[]): number {
@@ -101,6 +132,7 @@ export function aggregate(
     total: { ...ZERO_NUTRITION },
     fiberDaysKnown: fiberDays.length,
     fiberUnavailable,
+    estimates: { days: 0, calories: null, share: null, unavailable: false },
   }
 
   for (const metric of METRICS) {
@@ -118,7 +150,26 @@ export function aggregate(
     result.total[metric] = values.reduce((a, b) => a + b, 0)
   }
 
+  result.estimates = estimateShare(inWindow, Number(result.total.calories) || 0)
   return result
+}
+
+function estimateShare(days: DailyTotals[], totalCalories: number): EstimateShare {
+  const flagged = days.filter((d) => d.has_estimate)
+  const unavailable = flagged.some(
+    (d) => d.estimated_calories === null || d.estimated_calories === undefined,
+  )
+  if (unavailable) {
+    return { days: flagged.length, calories: null, share: null, unavailable }
+  }
+
+  const calories = flagged.reduce((sum, d) => sum + (Number(d.estimated_calories) || 0), 0)
+  return {
+    days: flagged.length,
+    calories,
+    share: totalCalories > 0 ? Math.min(1, calories / totalCalories) : null,
+    unavailable,
+  }
 }
 
 /**

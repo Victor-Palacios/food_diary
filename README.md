@@ -176,9 +176,12 @@ No CLI needed — all of this can be done in the browser at
    `food_usage` views, and enables RLS with owner-scoped policies on all three
    tables.
 
-   Then run `supabase/migrations/0002_optional_fiber.sql` and
-   `supabase/migrations/0003_fiber_totals_count_known.sql` the same way, in
-   that order — see [Fiber is optional](#fiber-is-optional).
+   Then run `supabase/migrations/0002_optional_fiber.sql`,
+   `0003_fiber_totals_count_known.sql` and `0004_estimated_calories.sql` the
+   same way, in that order — see [Fiber is optional](#fiber-is-optional) and
+   [Estimates are measured, not just labelled](#estimates-are-measured-not-just-labelled).
+   0003 and 0004 both only redefine the `daily_totals` view, and 0004 includes
+   everything 0003 did, so skipping 0003 is harmless.
 
    With the CLI instead, if you prefer:
 
@@ -252,6 +255,37 @@ says "at least this much: 2 of 6 entries recorded fiber" rather than implying a
 complete measurement. Storage is unchanged; NULL still means *not recorded*,
 because that is a different fact from a measured zero and only one of them is
 worth going back to fix.
+
+### Estimates are measured, not just labelled
+
+Every entry carries `s_is_estimate`: true when the numbers were guessed (a
+plate photo, or a description the model had to estimate), false when they were
+read off something (a label, a restaurant's published figures, your own scale).
+The extraction paths set it, and the **This is an estimate** box is there to
+correct them.
+
+It exists for the DEXA comparison. If a block's mean disagrees with a scan, the
+first question is how much of that mean was guesswork. So the block view says,
+directly under the mean:
+
+> **7%** of these calories were estimated — 3,250 kcal across 5 of 21 logged days.
+
+The share is **by calories, not by days**. One estimated banana flags a day as
+surely as an estimated restaurant dinner, so a day count alone cannot tell a
+block that is 5% guesswork from one that is 60%. The day count is shown
+alongside it. A block with no estimates says so explicitly — *"None of these
+calories were estimated"* — because that is the best thing the line can report
+and silence would look the same as not having checked.
+
+Unlogged days are left out of the share, exactly as they are left out of the
+mean. The same line appears on the day, week and month views.
+
+Until migration 0004 is run, the view only sends a yes/no per day, so the
+dashboard shows how many days include estimates and says the share needs the
+migration. It never reads the missing figure as 0, which would print "none
+estimated" over a block that has estimates in it. A window with no estimated
+days reports fully even before the migration, since there is nothing to
+withhold.
 
 ---
 
@@ -437,7 +471,7 @@ Three suites, all fast and offline — no network, no database, no browser:
 
 | File | Covers |
 |---|---|
-| `src/lib/logic.test.ts` | Block aggregation, calendar arithmetic across DST and month ends, multiplier parsing and rendering |
+| `src/lib/logic.test.ts` | Block aggregation and its estimated share, calendar arithmetic across DST and month ends, multiplier parsing and rendering |
 | `src/lib/extract.test.ts` | The client transport: ndjson streaming, the buffered fallback, and normalising a reply |
 | `worker/extract.test.ts` | Reading figures out of what a person or a model actually wrote |
 
@@ -459,6 +493,8 @@ Among them:
 - A day's fiber withheld entirely because one entry of six lacked it, hiding
   21 real grams.
 - A pre-migration `NULL` day total read as a genuine `0`.
+- The same trap for estimates: a pre-0004 view omitting `estimated_calories`
+  must read as *unknown*, not as "none of these calories were estimated".
 
 `npm run test:sw` is separate and not part of the build: it drives a real
 Chromium against a server that reproduces the original stale-cache bug, so it
@@ -647,7 +683,7 @@ src/
   pages/                   Today, Foods, Dashboard, Settings
 
 supabase/
-  migrations/0001_init.sql Schema, views, RLS
+  migrations/              Schema, views, RLS; run in numeric order
   seed.sql                 Opening targets
 
 scripts/generate-icons.mjs PNG icon generator (no image dependency)

@@ -28,6 +28,20 @@ export function formatCalories(value: number): string {
   return Math.round(value).toLocaleString('en-US')
 }
 
+/**
+ * A 0-1 fraction as a whole percentage. Never rounds a nonzero share to "0%"
+ * or a partial one to "100%": one estimated snack in a 21-day block is a small
+ * share, not no share, and the two read as different claims.
+ */
+export function formatPercent(fraction: number): string {
+  if (fraction <= 0) return '0%'
+  if (fraction >= 1) return '100%'
+  const pct = Math.round(fraction * 100)
+  if (pct < 1) return '<1%'
+  if (pct > 99) return '>99%'
+  return `${pct}%`
+}
+
 const VULGAR: Record<string, string> = {
   '0.25': '¼',
   '0.5': '½',

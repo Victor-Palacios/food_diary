@@ -4,7 +4,7 @@ import { IconBack, IconForward } from '../components/Icons'
 import * as api from '../lib/api'
 import { useAppData } from '../lib/AppData'
 import { aggregate, byDate, type Aggregate } from '../lib/stats'
-import { formatCalories, formatOptional, pluralize } from '../lib/format'
+import { formatCalories, formatOptional, formatPercent, pluralize } from '../lib/format'
 import { BLOCK_DAYS } from '../lib/config'
 import {
   addDays,
@@ -115,17 +115,12 @@ export function DashboardPage() {
 
       {error ? <div className="notice error">{error}</div> : null}
 
-      {/* Explains the fiber dashes rather than leaving them mysterious. The
-          view still withholds a partly-recorded day's sum, so the figure is
-          not in the response at all -- printing 0 would claim a zero on a
-          day that has fiber in it. Disappears once the migration is run. */}
-      {stats.fiberUnavailable ? (
-        <div className="notice">
-          Fiber totals are unavailable here until the database view is updated.
-          Run <code>supabase/migrations/0003_fiber_totals_count_known.sql</code> in
-          the Supabase SQL editor. Today&rsquo;s screen already shows fiber
-          correctly — it adds the entries up itself.
-        </div>
+      {/* Explains the dashes rather than leaving them mysterious. An old view
+          leaves these figures out of the response entirely, so printing 0
+          would claim a zero that is not known. Disappears once the migration
+          is run. */}
+      {stats.fiberUnavailable || stats.estimates.unavailable ? (
+        <StaleViewNotice stats={stats} />
       ) : null}
 
       {loading ? (
@@ -179,6 +174,7 @@ function DayView({
     <>
       <div className="card">
         <MetricGrid nutrition={stats.total} caption="Total for the day" />
+        <EstimateShareLine stats={stats} />
       </div>
       <div className="card">
         <TargetProgress totals={stats.total} target={target} />
@@ -205,6 +201,7 @@ function AverageView({ stats }: { stats: Aggregate }) {
             nutrition={stats.mean}
             caption="Daily average across logged days"
           />
+          <EstimateShareLine stats={stats} />
         </div>
       )}
     </>
@@ -271,6 +268,9 @@ function BlockView({
               {stats.daysLogged === 1 ? 'day' : 'days'} from {formatShort(start)} to{' '}
               {formatShort(end)}.
             </div>
+            {/* Directly under the mean, because it is a statement about how
+                far the mean can be trusted against a scan. */}
+            <EstimateShareLine stats={stats} />
           </div>
 
           <div className="card">
@@ -298,7 +298,7 @@ function BlockView({
                             some of the block it is a floor, and the column
                             says which days it is fully based on. */}
                         {metric === 'fiber_g' && stats.fiberUnavailable ? (
-                          <div className="sub">needs migration 0003</div>
+                          <div className="sub">needs migration 0004</div>
                         ) : metric === 'fiber_g' &&
                           stats.fiberDaysKnown < stats.daysLogged ? (
                           <div className="sub">
@@ -335,6 +335,75 @@ function Coverage({ stats }: { stats: Aggregate }) {
       </span>
     </div>
   )
+}
+
+/**
+ * How much of the figures above were estimated rather than read off a label,
+ * a restaurant's numbers or a scale. Shown even when the answer is none: that
+ * is the best thing this line can say about a block, and silence would not
+ * distinguish it from "not checked".
+ */
+function EstimateShareLine({ stats }: { stats: Aggregate }) {
+  const { estimates, daysLogged, daysInWindow } = stats
+  if (daysLogged === 0) return null
+
+  // "across 1 of 1 day" says nothing on the single-day view.
+  const single = daysInWindow === 1
+  const acrossDays = single
+    ? ''
+    : ` across ${estimates.days} of ${daysLogged} logged ${pluralize(daysLogged, 'day')}`
+
+  if (estimates.unavailable) {
+    return (
+      <div className="sub estimate-share">
+        {single
+          ? 'This day includes estimates.'
+          : `${estimates.days} of ${daysLogged} logged ${pluralize(daysLogged, 'day')} ` +
+            `${estimates.days === 1 ? 'includes' : 'include'} estimates.`}{' '}
+        Their share of the calories needs migration 0004.
+      </div>
+    )
+  }
+
+  if (!estimates.calories) {
+    return (
+      <div className="sub estimate-share">
+        None of these calories were estimated.
+      </div>
+    )
+  }
+
+  return (
+    <div className="sub estimate-share">
+      <strong>{formatPercent(estimates.share ?? 0)}</strong> of these calories were
+      estimated — {formatCalories(estimates.calories)} kcal{acrossDays}.
+    </div>
+  )
+}
+
+/** Names exactly what an out-of-date `daily_totals` view is withholding. */
+function StaleViewNotice({ stats }: { stats: Aggregate }) {
+  const missing = [
+    stats.fiberUnavailable ? 'fiber totals' : null,
+    stats.estimates.unavailable ? 'the share of estimated calories' : null,
+  ].filter((m): m is string => m !== null)
+
+  return (
+    <div className="notice">
+      {capitalize(missing.join(' and '))} {missing.length > 1 ? 'are' : 'is'}{' '}
+      unavailable here until the database view is updated. Run{' '}
+      <code>supabase/migrations/0004_estimated_calories.sql</code> in the Supabase
+      SQL editor — it includes the earlier fiber fix, so it is the only one you
+      need.
+      {stats.fiberUnavailable
+        ? ' Today’s screen already shows fiber correctly — it adds the entries up itself.'
+        : null}
+    </div>
+  )
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
 function MetricGrid({

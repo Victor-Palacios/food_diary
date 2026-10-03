@@ -140,6 +140,11 @@ export interface DailyTotals extends Omit<NutritionInput, OptionalMetric> {
   /** How many of the day's entries recorded fiber. */
   fiber_entry_count: number
   has_estimate: boolean
+  /**
+   * Calories from entries flagged as estimates. NULL only from a view
+   * predating migration 0004, which reported just `has_estimate`.
+   */
+  estimated_calories: number | null
 }
 
 export interface Target {
