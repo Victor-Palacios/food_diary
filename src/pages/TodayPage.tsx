@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { EntrySheet } from '../components/EntrySheet'
+import { SaveMealSheet } from '../components/SaveMealSheet'
 import { MacroPreview } from '../components/MacroPreview'
 import { TargetProgress } from '../components/TargetProgress'
 import { IconBack, IconForward, IconPlus } from '../components/Icons'
@@ -25,6 +26,11 @@ export function TodayPage() {
   const [error, setError] = useState<string | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editing, setEditing] = useState<LogEntry | null>(null)
+  // Picking entries to save as a meal. Ids, not entries, so a reload of the
+  // day cannot leave a stale entry selected.
+  const [selecting, setSelecting] = useState(false)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [namingMeal, setNamingMeal] = useState(false)
 
   const load = useCallback(async (date: IsoDate) => {
     setLoading(true)
@@ -40,11 +46,32 @@ export function TodayPage() {
 
   useEffect(() => {
     void load(day)
+    // A selection belongs to the day it was made on.
+    setSelecting(false)
+    setPicked(new Set())
   }, [day, load])
 
   const totals = sumNutrition(entries)
   const target = api.activeTarget(targets, day)
   const isToday = day === today()
+
+  // Only library foods can go in a meal; a one-off has no food row to point at.
+  const pickable = entries.filter((e) => e.food_id !== null)
+  const pickedEntries = entries.filter((e) => picked.has(e.id))
+
+  function togglePick(id: string) {
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function stopSelecting() {
+    setSelecting(false)
+    setPicked(new Set())
+  }
 
   function afterWrite() {
     void load(day)
@@ -90,9 +117,26 @@ export function TodayPage() {
         />
       </div>
 
-      <h2>
-        {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
-      </h2>
+      <div className="list-head">
+        <h2>
+          {selecting
+            ? `${picked.size} selected`
+            : `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`}
+        </h2>
+        {/* Making a meal from what was actually eaten is the only way to make
+            one: the servings are then right without retyping anything. */}
+        {!loading && !selecting && pickable.length >= 2 ? (
+          <button className="btn ghost sm" onClick={() => setSelecting(true)}>
+            Save as meal
+          </button>
+        ) : null}
+      </div>
+
+      {selecting ? (
+        <div className="sub" style={{ marginBottom: 10 }}>
+          Tick the foods that make up the meal, at the servings you had them.
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="spinner" />
@@ -103,7 +147,24 @@ export function TodayPage() {
       ) : (
         <div className="card tight">
           {entries.map((entry) => (
-            <button key={entry.id} className="row" onClick={() => setEditing(entry)}>
+            <button
+              key={entry.id}
+              className={selecting && entry.food_id === null ? 'row off' : 'row'}
+              disabled={selecting && entry.food_id === null}
+              aria-pressed={selecting ? picked.has(entry.id) : undefined}
+              onClick={() => (selecting ? togglePick(entry.id) : setEditing(entry))}
+            >
+              {selecting ? (
+                <input
+                  type="checkbox"
+                  className="row-check"
+                  checked={picked.has(entry.id)}
+                  disabled={entry.food_id === null}
+                  readOnly
+                  tabIndex={-1}
+                  aria-hidden="true"
+                />
+              ) : null}
               <div className="row-main">
                 <div className="row-title">
                   {entry.multiplier !== 1 ? (
@@ -112,7 +173,9 @@ export function TodayPage() {
                   {entry.label}
                 </div>
                 <div className="row-sub">
-                  {formatTime(entry.eaten_at)}
+                  {selecting && entry.food_id === null
+                    ? 'Not in the library, so it cannot go in a meal'
+                    : formatTime(entry.eaten_at)}
                   {entry.s_is_estimate ? ' · estimate' : ''}
                   {entry.note ? ` · ${entry.note}` : ''}
                 </div>
@@ -126,10 +189,30 @@ export function TodayPage() {
         </div>
       )}
 
-      <button className="fab" onClick={() => setSheetOpen(true)}>
-        <IconPlus />
-        Log
-      </button>
+      {/* The bar is taller than the add button it replaces, and the page only
+          reserves room for the button, so the last entry needs this to
+          scroll clear of it. */}
+      {selecting ? <div style={{ height: 32 }} aria-hidden="true" /> : null}
+
+      {selecting ? (
+        <div className="select-bar">
+          <button className="btn" onClick={stopSelecting}>
+            Cancel
+          </button>
+          <button
+            className="btn primary"
+            disabled={pickedEntries.length < 2}
+            onClick={() => setNamingMeal(true)}
+          >
+            {pickedEntries.length < 2 ? 'Pick at least 2' : `Save ${pickedEntries.length} as meal`}
+          </button>
+        </div>
+      ) : (
+        <button className="fab" onClick={() => setSheetOpen(true)}>
+          <IconPlus />
+          Log
+        </button>
+      )}
 
       {sheetOpen ? (
         <EntrySheet
@@ -137,6 +220,17 @@ export function TodayPage() {
           foods={foods}
           onClose={() => setSheetOpen(false)}
           onSaved={afterWrite}
+        />
+      ) : null}
+
+      {namingMeal ? (
+        <SaveMealSheet
+          entries={pickedEntries}
+          onClose={() => setNamingMeal(false)}
+          onSaved={() => {
+            stopSelecting()
+            void refreshShared()
+          }}
         />
       ) : null}
 

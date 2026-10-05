@@ -183,6 +183,9 @@ No CLI needed — all of this can be done in the browser at
    0003 and 0004 both only redefine the `daily_totals` view, and 0004 includes
    everything 0003 did, so skipping 0003 is harmless.
 
+   Then `0005_meals.sql`, which adds [saved meals](#saved-meals) and creates
+   *Usual breakfast* from the library. It is safe to run twice.
+
    With the CLI instead, if you prefer:
 
    ```sh
@@ -467,11 +470,12 @@ and Cloudflare Workers Builds runs `npm run build` on every push, so a failing
 test fails the deploy. Tests that nothing runs are documentation, and this
 project deploys straight from a push with no other gate.
 
-Three suites, all fast and offline — no network, no database, no browser:
+Four suites, all fast and offline — no network, no database, no browser:
 
 | File | Covers |
 |---|---|
 | `src/lib/logic.test.ts` | Block aggregation and its estimated share, calendar arithmetic across DST and month ends, multiplier parsing and rendering |
+| `src/lib/meals.test.ts` | Saved meals write exactly the entries logging each food would: snapshots, servings, archived foods, making one from Today |
 | `src/lib/extract.test.ts` | The client transport: ndjson streaming, the buffered fallback, and normalising a reply |
 | `worker/extract.test.ts` | Reading figures out of what a person or a model actually wrote |
 
@@ -649,6 +653,47 @@ block view states `N / 21` prominently and warns when any are missing.
 the greatest `effective_from` on or before it, so dropping the ceiling by 100
 kcal never re-scores a block that was already logged.
 
+### Saved meals
+
+The usual breakfast — steel cut oats, flaxseed, four servings of fruit, a scoop
+of protein — was four trips through the picker every morning. A saved meal
+makes it one: **Log → Usual breakfast → Log 4 foods.**
+
+The sheet opens with every food ticked at its usual servings. Anything
+different about today is changed there, for today only: a stepper per food in
+half servings, and a tick to leave one out.
+
+**A meal is a shortcut, not a recipe.** It stores which foods and how many
+servings, and no nutrition at all. Logging it writes one ordinary entry per
+food, in one request, each snapshotting its food at that moment. So:
+
+- Nothing downstream knows a meal was involved. Daily totals, fiber coverage
+  and the estimated share treat the entries exactly as if they were logged one
+  at a time, and each one keeps its own estimate flag and source.
+- A correction to a food in the library reaches the meal the next time it is
+  logged, and never reaches back into entries already made.
+- Every entry can be edited or deleted on Today like any other.
+
+That is the distinction from the *recipes and multi-ingredient composition*
+listed as out of scope below. A recipe works out nutrition per serving from
+ingredient weights, which would be a second data model. This writes the same
+rows the picker would.
+
+**Making one.** On Today, **Save as meal** → tick the entries → name it. The
+servings are the ones actually eaten, so nothing is retyped. Only library foods
+can go in; a one-off has no food row to point at. The same food selected twice
+becomes one item with the servings added. There is no editor: to change a
+meal, delete it from its sheet and save it again.
+
+**A food that is archived** stays in the meal as a visible, unticked line, with
+a note. Dropping it silently would log a breakfast short by that food and look
+exactly like the complete one.
+
+*Usual breakfast* itself is created by migration 0005, from foods found by name
+— `steel cut oats` 1x, `ground flaxseed` 1x, `assorted fruit` 4x, `protein
+powder` 1x, matching how it was actually logged. If any of the four is missing
+it creates nothing and says so, rather than a breakfast without its oats.
+
 **Days are bounded by local midnight** in one fixed timezone (`VITE_TIMEZONE`).
 All date arithmetic works on `YYYY-MM-DD` strings in UTC, so a DST transition
 cannot shift which day a meal counted toward. `eaten_on` is editable for the
@@ -675,11 +720,12 @@ src/
     types.ts               The seven metrics and the row shapes
     dates.ts               Calendar days in the fixed timezone
     stats.ts               Mean/median; the unlogged-days rule
+    meals.ts               Saved meals: what logging one writes
     api.ts                 All reads and writes
     extract.ts             Phase 2 client: compress, post, normalize
-    AppData.tsx            Shared foods + targets
-    logic.test.ts          Unit tests
-  components/              AuthGate, Sheet, MultiplierPicker, forms, icons
+    AppData.tsx            Shared foods, meals and targets
+    *.test.ts              Unit tests
+  components/              AuthGate, Sheet, MultiplierPicker, MealSheet, forms, icons
   pages/                   Today, Foods, Dashboard, Settings
 
 supabase/
@@ -697,6 +743,7 @@ public/
 
 ### Out of scope, on purpose
 
-Barcode scanning, recipes and multi-ingredient composition, weight/DEXA entry,
+Barcode scanning, recipes and multi-ingredient composition (saved meals are
+not this — see [Saved meals](#saved-meals)), weight/DEXA entry,
 streaks and notifications, sharing and export, multi-user, offline-first sync
 with conflict resolution, and micronutrients beyond the seven tracked.

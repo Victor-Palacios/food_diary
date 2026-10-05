@@ -185,6 +185,31 @@ export function isCeiling(metric: TargetedMetric): boolean {
   return metric === 'calories'
 }
 
+/**
+ * A named combination of library foods, logged in one go.
+ *
+ * Holds no nutrition of its own -- only which foods and how many servings.
+ * Logging it writes one ordinary entry per food, snapshotting each food as it
+ * is at that moment, so a meal is invisible to everything downstream.
+ */
+export interface Meal {
+  id: string
+  owner_id: string
+  name: string
+  created_at: string
+  /** In display order. */
+  items: MealItem[]
+}
+
+export interface MealItem {
+  id: string
+  meal_id: string
+  food_id: string
+  /** The usual servings. Adjustable at log time; this is only the default. */
+  multiplier: number
+  position: number
+}
+
 /** The per-serving snapshot carried onto a new log entry. */
 export interface Snapshot extends NutritionInput {
   label: string

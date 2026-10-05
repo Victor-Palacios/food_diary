@@ -10,15 +10,18 @@ import {
 } from './NutritionFields'
 import { PhotoButton } from './PhotoButton'
 import { TextEstimate } from './TextEstimate'
+import { MealSheet } from './MealSheet'
 import { IconBack, IconSearch, IconTrash } from './Icons'
 import * as api from '../lib/api'
+import { useAppData } from '../lib/AppData'
+import { mealLines, mealTotal, snapshotFromFood } from '../lib/meals'
 import { scale } from '../lib/stats'
 import { formatMultiplier, parseNumber } from '../lib/format'
 import { formatRelative, type IsoDate } from '../lib/dates'
 import { METRICS } from '../lib/types'
-import type { FoodSource, FoodWithUsage, LogEntry, NutritionInput, Snapshot } from '../lib/types'
+import type { FoodSource, FoodWithUsage, LogEntry, Meal, NutritionInput } from '../lib/types'
 
-type Mode = 'pick' | 'quantity' | 'oneoff' | 'edit'
+type Mode = 'pick' | 'quantity' | 'oneoff' | 'edit' | 'meal'
 
 interface Props {
   day: IsoDate
@@ -38,6 +41,10 @@ interface Props {
 export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
   const [mode, setMode] = useState<Mode>(editing ? 'edit' : 'pick')
   const [selected, setSelected] = useState<FoodWithUsage | null>(null)
+  const [selectedMeal, setSelectedMeal] = useState<Meal | null>(null)
+  // Meals resolve against every food, archived included, so their totals
+  // match what the meal sheet will actually log.
+  const { meals, foods: allFoods } = useAppData()
   const [multiplier, setMultiplier] = useState(editing ? editing.multiplier : 1)
   const [search, setSearch] = useState('')
   const [note, setNote] = useState(editing?.note ?? '')
@@ -67,6 +74,12 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
         (f.brand ? f.brand.toLowerCase().includes(q) : false),
     )
   }, [foods, search])
+
+  const filteredMeals = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const list = meals ?? []
+    return q ? list.filter((m) => m.name.toLowerCase().includes(q)) : list
+  }, [meals, search])
 
   /** Per-serving values currently in play, whichever mode we are in. */
   const perServing: NutritionInput = useMemo(() => {
@@ -122,12 +135,8 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
 
   function saveFromLibrary() {
     if (!selected) return
-    const snapshot: Snapshot = {
-      label: selected.brand ? `${selected.name} (${selected.brand})` : selected.name,
-      source: selected.source,
-      is_estimate: selected.is_estimate,
-      ...perServing,
-    }
+    // The same snapshot a meal would take of this food.
+    const snapshot = snapshotFromFood(selected)
     void run(() =>
       api
         .createEntry({
@@ -252,7 +261,47 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {/* Meals first: one tap here replaces several trips through the
+            list below, so they earn the top of the hot path. */}
+        {filteredMeals.length > 0 ? (
+          <>
+            <div className="picker-head">Meals</div>
+            <div>
+              {filteredMeals.map((meal) => {
+                const lines = mealLines(meal, allFoods)
+                const names = lines.map((l) => l.food?.name ?? 'deleted food')
+                return (
+                  <button
+                    key={meal.id}
+                    className="row"
+                    onClick={() => {
+                      setSelectedMeal(meal)
+                      setMode('meal')
+                    }}
+                  >
+                    <div className="row-main">
+                      <div className="row-title">{meal.name}</div>
+                      <div className="row-sub">
+                        {lines.length} {lines.length === 1 ? 'food' : 'foods'} · {names.join(', ')}
+                      </div>
+                    </div>
+                    <div className="row-end">
+                      <div className="row-kcal">{Math.round(mealTotal(lines).calories)}</div>
+                      <div className="row-sub">kcal</div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+            {filtered.length > 0 ? <div className="picker-head">Foods</div> : null}
+          </>
+        ) : meals === null && !search.trim() ? (
+          <div className="sub picker-note">
+            Saved meals appear here once <code>0005_meals.sql</code> has been run in Supabase.
+          </div>
+        ) : null}
+
+        {filtered.length === 0 && filteredMeals.length > 0 ? null : filtered.length === 0 ? (
           <div className="empty">
             {foods.length === 0
               ? 'The library is empty. Add a food, or log a one-off below.'
@@ -287,6 +336,22 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
           </div>
         )}
       </Sheet>
+    )
+  }
+
+  // -------------------------------------------------------------------------
+  // A saved meal
+  // -------------------------------------------------------------------------
+
+  if (mode === 'meal' && selectedMeal) {
+    return (
+      <MealSheet
+        meal={selectedMeal}
+        day={day}
+        onBack={() => setMode('pick')}
+        onClose={onClose}
+        onSaved={onSaved}
+      />
     )
   }
 

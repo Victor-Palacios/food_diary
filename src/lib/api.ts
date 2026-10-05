@@ -7,6 +7,8 @@ import type {
   FoodSource,
   FoodWithUsage,
   LogEntry,
+  Meal,
+  MealItem,
   NutritionInput,
   Snapshot,
   Target,
@@ -185,31 +187,55 @@ export interface NewEntry {
   note: string | null
 }
 
-export async function createEntry(entry: NewEntry): Promise<LogEntry> {
+function entryRow(entry: NewEntry) {
   const { snapshot } = entry
+  return {
+    eaten_on: entry.eaten_on,
+    food_id: entry.food_id,
+    label: snapshot.label,
+    multiplier: entry.multiplier,
+    s_calories: snapshot.calories,
+    s_protein_g: snapshot.protein_g,
+    s_carbs_g: snapshot.carbs_g,
+    s_fat_total_g: snapshot.fat_total_g,
+    s_fat_sat_g: snapshot.fat_sat_g,
+    s_fat_trans_g: snapshot.fat_trans_g,
+    s_fiber_g: snapshot.fiber_g,
+    s_source: snapshot.source,
+    s_is_estimate: snapshot.is_estimate,
+    note: entry.note,
+  }
+}
+
+export async function createEntry(entry: NewEntry): Promise<LogEntry> {
   const { data, error } = await supabase
     .from('log_entries')
-    .insert({
-      eaten_on: entry.eaten_on,
-      food_id: entry.food_id,
-      label: snapshot.label,
-      multiplier: entry.multiplier,
-      s_calories: snapshot.calories,
-      s_protein_g: snapshot.protein_g,
-      s_carbs_g: snapshot.carbs_g,
-      s_fat_total_g: snapshot.fat_total_g,
-      s_fat_sat_g: snapshot.fat_sat_g,
-      s_fat_trans_g: snapshot.fat_trans_g,
-      s_fiber_g: snapshot.fiber_g,
-      s_source: snapshot.source,
-      s_is_estimate: snapshot.is_estimate,
-      note: entry.note,
-    })
+    .insert(entryRow(entry))
     .select()
     .single()
 
   if (error) fail('Could not save the entry', error)
   return coerceEntry(data)
+}
+
+/**
+ * Several entries in one request, for logging a meal. One INSERT statement,
+ * so it lands whole or not at all: a breakfast saved without its oats would
+ * read 150 kcal short and look complete.
+ */
+export async function createEntries(entries: NewEntry[]): Promise<LogEntry[]> {
+  if (entries.length === 0) return []
+  // One statement means one now(), so every row would share a timestamp and
+  // Today, which orders by it, would show the meal in an arbitrary order that
+  // can change between loads. A millisecond apart keeps the meal's own order.
+  const t0 = Date.now()
+  const { data, error } = await supabase
+    .from('log_entries')
+    .insert(entries.map((entry, i) => ({ ...entryRow(entry), eaten_at: new Date(t0 + i).toISOString() })))
+    .select()
+
+  if (error) fail('Could not save the entries', error)
+  return (data ?? []).map(coerceEntry)
 }
 
 /**
@@ -262,6 +288,94 @@ export async function listEntries(from: IsoDate, to: IsoDate): Promise<LogEntry[
 
 export async function listEntriesForDay(day: IsoDate): Promise<LogEntry[]> {
   return listEntries(day, day)
+}
+
+// ---------------------------------------------------------------------------
+// Meals
+// ---------------------------------------------------------------------------
+
+/** What PostgREST says when a table is not there yet: migration 0005 is unrun. */
+function isMissingTable(error: { code?: string; message: string }): boolean {
+  return (
+    error.code === 'PGRST205' ||
+    error.code === '42P01' ||
+    /could not find the table/i.test(error.message)
+  )
+}
+
+/** Shown wherever a meal is written before the tables exist. */
+export const MEALS_NEED_MIGRATION =
+  'Saved meals need the database updated first. Run ' +
+  'supabase/migrations/0005_meals.sql in the Supabase SQL editor.'
+
+/**
+ * Null, rather than an empty list, when the meals tables do not exist yet. The
+ * picker must keep working before the migration is run, and it has to be able
+ * to say why there are no meals rather than implying none were ever saved.
+ */
+export async function listMeals(): Promise<Meal[] | null> {
+  const { data, error } = await supabase
+    .from('meals')
+    .select('id, owner_id, name, created_at, items:meal_items(id, meal_id, food_id, multiplier, position)')
+    .order('name')
+
+  if (error) {
+    if (isMissingTable(error)) return null
+    fail('Could not load meals', error)
+  }
+
+  return (data ?? []).map((row) => {
+    const items = ((row.items ?? []) as Record<string, unknown>[])
+      .map((item) => ({ ...item, multiplier: num(item.multiplier), position: num(item.position) }) as MealItem)
+      .sort((a, b) => a.position - b.position)
+    return { ...row, items } as Meal
+  })
+}
+
+export interface NewMealItem {
+  food_id: string
+  multiplier: number
+}
+
+/**
+ * Two requests, because PostgREST has no multi-table insert. If the items fail
+ * the meal row is removed again, so a half-saved meal never appears in the
+ * picker looking like a real one with nothing in it.
+ */
+export async function createMeal(name: string, items: NewMealItem[]): Promise<void> {
+  const { data: meal, error } = await supabase
+    .from('meals')
+    .insert({ name: name.trim() })
+    .select('id')
+    .single()
+
+  if (error) {
+    if (isMissingTable(error)) throw new Error(MEALS_NEED_MIGRATION)
+    if (error.code === '23505') {
+      throw new Error(`There is already a meal called "${name.trim()}". Pick another name.`)
+    }
+    fail('Could not save the meal', error)
+  }
+
+  const { error: itemsError } = await supabase.from('meal_items').insert(
+    items.map((item, i) => ({
+      meal_id: meal.id,
+      food_id: item.food_id,
+      multiplier: item.multiplier,
+      position: i + 1,
+    })),
+  )
+
+  if (itemsError) {
+    await supabase.from('meals').delete().eq('id', meal.id)
+    fail('Could not save the meal', itemsError)
+  }
+}
+
+/** Removes the shortcut only. Entries already logged from it are untouched. */
+export async function deleteMeal(id: string): Promise<void> {
+  const { error } = await supabase.from('meals').delete().eq('id', id)
+  if (error) fail('Could not delete the meal', error)
 }
 
 // ---------------------------------------------------------------------------

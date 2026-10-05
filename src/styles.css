@@ -158,6 +158,38 @@ button {
   }
 }
 
+/* Takes the add button's place while picking entries for a meal, so the two
+   can never both be live. */
+.select-bar {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(var(--nav-h) + var(--safe-bottom) + 16px);
+  z-index: 45;
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.select-bar .btn:first-child {
+  flex: 0 0 auto;
+}
+
+.select-bar .btn.primary {
+  flex: 1;
+}
+
+@media (min-width: 720px) {
+  .select-bar {
+    left: calc(50vw - 360px + 16px);
+    right: calc(50vw - 360px + 16px);
+  }
+}
+
 /* --------------------------------------------------------------------------
    Typography & headers
    -------------------------------------------------------------------------- */
@@ -274,6 +306,126 @@ h2 {
 
 button.row:active {
   background: var(--surface-2);
+}
+
+.row.off {
+  opacity: 0.5;
+}
+
+.row-check {
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  pointer-events: none;
+}
+
+/* A section header with an action on the right, e.g. "4 entries · Save as meal". */
+.list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.list-head h2 {
+  margin: 0;
+}
+
+/* Section labels inside the food picker: Meals, then Foods. */
+.picker-head {
+  padding: 12px 14px 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.picker-note {
+  padding: 8px 14px 4px;
+}
+
+.picker-note code {
+  overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------------------
+   Meal sheet: one line per food, with its own servings
+   -------------------------------------------------------------------------- */
+
+.meal-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.meal-line:last-child {
+  border-bottom: none;
+}
+
+.meal-line-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--tap);
+}
+
+.meal-line-main input {
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+.meal-line-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.meal-line.off .meal-line-text,
+.meal-line.off .stepper {
+  opacity: 0.45;
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.stepper button {
+  width: 40px;
+  height: 40px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.stepper button:disabled {
+  opacity: 0.3;
+}
+
+.stepper button:active:not(:disabled) {
+  background: var(--surface-3);
+}
+
+.stepper-v {
+  min-width: 40px;
+  text-align: center;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 
 .empty {
