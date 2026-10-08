@@ -238,20 +238,6 @@ function dailyTable(s) {
   return card(`${h2('Daily numbers')}${sub(`${short(s.start)} to ${short(s.end)}. Grams for protein, carbs, fat and fiber.`)}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse"><tr>${th('Day', true)}${th('kcal')}${th('Est.')}${th('Protein')}${th('Carbs')}${th('Fat')}${th('Fiber')}</tr>${rows}</table>`)
 }
 
-/** The note on method, in every email, so the numbers can always be checked. */
-export const METHOD = [
-  'Read from your Food Log when it was sent: the 7 days ending the day before, so every day in it is complete. The scheduled email goes out on Saturday morning and covers Saturday to Friday.',
-  'Days you didn’t log are left out of the averages, never counted as zero. Days before your first entry are marked as such, not as missed.',
-  'Each day is compared with the target in effect on that day.',
-  '“Estimated” means the entry was filed as a calorie estimate: a plate photo, or a description the model had to guess at. Its share is measured in calories, not days. If something is marked wrongly, untick it on the Foods page; that corrects the past entries too.',
-  'Fiber counts entries with no fiber recorded as zero, so it is a floor.',
-  'The energy split uses 4 kcal per gram of protein and carbs and 9 per gram of fat.',
-]
-
-function method() {
-  return card(`${h2('How this summary is made')}<ul style="margin:6px 0 0 0;padding:0 0 0 18px;font-size:13px;color:${C.dim};line-height:1.5">${METHOD.map((m) => `<li style="margin:0 0 5px 0">${escapeHtml(m)}</li>`).join('')}</ul>`)
-}
-
 /** Shown in the inbox and atop the email, so the summary is easy to spot. */
 export const EMOJI = '🥗'
 
@@ -262,7 +248,7 @@ export function subject(s) {
 export function renderEmail(s) {
   const body = s.daysLogged === 0
     ? card(`${h2('Nothing logged')}${sub(`There are no entries between ${short(s.start)} and ${short(s.end)}.`)}`)
-    : hero(s) + chartCard(s) + tiles(s) + foodsCard(s) + dailyTable(s) + method()
+    : hero(s) + chartCard(s) + tiles(s) + foodsCard(s) + dailyTable(s)
 
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light"><title>${escapeHtml(subject(s))}</title></head>
 <body style="margin:0;padding:0;background:${C.bg};font-family:${FONT};color:${C.text}">
@@ -291,9 +277,6 @@ export function renderText(s) {
     '',
     'Top foods by calories:',
     ...s.topFoods.map((f) => `  ${f.label}: ${fmt(f.kcal)} kcal (${f.times}x)${f.estimate ? ', estimate' : ''}`),
-    '',
-    'How this summary is made:',
-    ...METHOD.map((m) => `  - ${m}`),
   ]
   return lines.join('\n')
 }

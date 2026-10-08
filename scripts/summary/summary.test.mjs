@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import nodemailer from 'nodemailer'
 import { addDays, computeSummary } from './compute.mjs'
-import { METHOD, columnRuns, escapeHtml, renderEmail, renderText, subject } from './render.mjs'
+import { columnRuns, escapeHtml, renderEmail, renderText, subject } from './render.mjs'
 import { buildMessage, shouldSend, utcOffsetHours } from './send.mjs'
 
 /**
@@ -229,10 +229,10 @@ describe('the email', () => {
     expect(colors).toEqual(['empty', 'estimated', 'gap', 'measured'])
   })
 
-  it('includes the method note and leaves out the DEXA section', () => {
+  it('leaves out the method note and the DEXA section', () => {
     const html = renderEmail(base())
-    expect(html).toContain('How this summary is made')
-    for (const line of METHOD) expect(html).toContain(escapeHtml(line))
+    expect(html).not.toContain('How this summary is made')
+    expect(renderText(base())).not.toContain('How this summary is made')
     expect(html).not.toMatch(/DEXA/i)
   })
 

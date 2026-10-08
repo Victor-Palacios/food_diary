@@ -666,8 +666,8 @@ the app's own, so the email and the dashboard never disagree:
   and, once migration 0005 is run, the share of each saved meal's foods and
   the days all of them were eaten together.
 
-Every email ends with this method in short, so the numbers can always be
-checked. The *Reading this against a DEXA scan* notes from the one-off
+The email itself carries only the figures; this section is where the method
+lives. The *Reading this against a DEXA scan* notes from the one-off
 infographic are deliberately left out.
 
 Email clients run no JavaScript and Gmail drops SVG, so the email is tables
