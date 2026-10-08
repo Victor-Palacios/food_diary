@@ -86,8 +86,13 @@ export function FoodForm({ food, onClose, onSaved }: Props) {
         is_estimate: isEstimate,
         ...nutrition,
       }
-      if (food) await api.updateFood(food.id, input)
-      else await api.createFood(input)
+      if (food) {
+        await api.updateFood(food.id, input)
+        // The food row alone is not enough: its entries carry their own copy.
+        if (isEstimate !== food.is_estimate) await api.setFoodEstimate(food.id, isEstimate)
+      } else {
+        await api.createFood(input)
+      }
       onSaved()
       onClose()
     } catch (e) {
@@ -173,8 +178,13 @@ export function FoodForm({ food, onClose, onSaved }: Props) {
           checked={isEstimate}
           onChange={(e) => setIsEstimate(e.target.checked)}
         />
-        These numbers are an estimate
+        These numbers are a calorie estimate
       </label>
+      {food && isEstimate !== food.is_estimate ? (
+        <div className="sub" style={{ marginTop: -4, marginBottom: 12 }}>
+          Saving also {isEstimate ? 'marks' : 'unmarks'} every entry already logged from this food.
+        </div>
+      ) : null}
 
       {error ? <div className="notice error">{error}</div> : null}
     </Sheet>

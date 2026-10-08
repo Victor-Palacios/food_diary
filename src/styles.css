@@ -1125,6 +1125,34 @@ tr.unlogged td:first-child {
   color: var(--warn);
 }
 
+/* The per-food estimate tick on the Foods page. */
+.est-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.est-toggle.on {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.est-toggle input {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  accent-color: var(--warn);
+}
+
 .pill.archived {
   background: color-mix(in srgb, var(--text-faint) 18%, transparent);
 }

@@ -1,0 +1,45 @@
+# Emails the 21-day summary every Saturday at 8am California time.
+#
+# GitHub's cron is UTC only and California moves between UTC-7 and UTC-8, so
+# both 8am candidates are scheduled and the script keeps the one that is 8am
+# locally that week (see shouldSend in scripts/summary/send.mjs). Scheduled runs
+# can start several minutes late when GitHub is busy.
+#
+# This repository is public, so this job's logs are too. The script never
+# prints anything read from the log, and nothing is uploaded as an artifact.
+name: Weekly summary
+
+on:
+  schedule:
+    - cron: '0 15 * * 6' # 8am PDT (summer)
+    - cron: '0 16 * * 6' # 8am PST (winter)
+  # "Run workflow" on the Actions tab sends one immediately, to check it works.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weekly-summary
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: node scripts/summary/send.mjs
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          FOOD_LOG_EMAIL: ${{ secrets.FOOD_LOG_EMAIL }}
+          FOOD_LOG_PASSWORD: ${{ secrets.FOOD_LOG_PASSWORD }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}

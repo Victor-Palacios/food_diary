@@ -19,3 +19,6 @@ npm-debug.log*
 .DS_Store
 .idea/
 .vscode/
+
+# Weekly summary dry runs hold real log data. Never commit them.
+summary.html

@@ -18,6 +18,8 @@ export function FoodsPage() {
   const [editing, setEditing] = useState<Food | null>(null)
   const [creating, setCreating] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
+  // The tick shows the new state at once; the save and reload follow.
+  const [pendingEstimate, setPendingEstimate] = useState<Record<string, boolean>>({})
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -31,6 +33,18 @@ export function FoodsPage() {
       )
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [foods, search, showArchived])
+
+  async function toggleEstimate(food: Food, next: boolean) {
+    setBusyId(food.id)
+    setPendingEstimate((p) => ({ ...p, [food.id]: next }))
+    try {
+      await api.setFoodEstimate(food.id, next)
+      await refresh()
+    } finally {
+      setPendingEstimate(({ [food.id]: _done, ...rest }) => rest)
+      setBusyId(null)
+    }
+  }
 
   async function toggleArchive(food: Food) {
     setBusyId(food.id)
@@ -92,10 +106,7 @@ export function FoodsPage() {
                 style={{ textAlign: 'left', minHeight: 40 }}
                 onClick={() => setEditing(food)}
               >
-                <div className="row-title">
-                  {food.name}
-                  {food.is_estimate ? <span className="pill estimate"> est</span> : null}
-                </div>
+                <div className="row-title">{food.name}</div>
                 {/* Kept short enough not to truncate beside the button; the
                     full breakdown is one tap away in the editor. */}
                 <div className="row-sub">
@@ -103,6 +114,19 @@ export function FoodsPage() {
                   {food.serving_label} · {formatCalories(food.calories)} kcal
                 </div>
               </button>
+              {/* Ticked when this food's calories are an estimate. Changing it
+                  here also corrects every entry already logged from it, which
+                  is what the dashboard's estimated share reads. */}
+              <label className={(pendingEstimate[food.id] ?? food.is_estimate) ? 'est-toggle on' : 'est-toggle'}>
+                <input
+                  type="checkbox"
+                  checked={pendingEstimate[food.id] ?? food.is_estimate}
+                  disabled={busyId === food.id}
+                  onChange={(e) => void toggleEstimate(food, e.target.checked)}
+                  aria-label={`${food.name}: calorie estimate`}
+                />
+                Estimate
+              </label>
               <button
                 className="btn sm"
                 disabled={busyId === food.id}

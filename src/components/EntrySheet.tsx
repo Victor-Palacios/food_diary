@@ -49,6 +49,7 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
   const [search, setSearch] = useState('')
   const [note, setNote] = useState(editing?.note ?? '')
   const [eatenOn, setEatenOn] = useState<IsoDate>(editing?.eaten_on ?? day)
+  const [entryEstimate, setEntryEstimate] = useState(editing?.s_is_estimate ?? false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -196,6 +197,7 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
           multiplier,
           eaten_on: eatenOn,
           note: note.trim() || null,
+          s_is_estimate: entryEstimate,
         })
         .then(() => undefined),
     )
@@ -555,6 +557,18 @@ export function EntrySheet({ day, foods, editing, onClose, onSaved }: Props) {
           note={note}
           setNote={setNote}
         />
+
+        {/* Correctable after the fact, because a label photographed through
+            the plate button is filed as a guess. This entry only; to fix every
+            entry of a food at once, untick it on the Foods page. */}
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={entryEstimate}
+            onChange={(e) => setEntryEstimate(e.target.checked)}
+          />
+          This is a calorie estimate
+        </label>
 
         {editing.food_id === null ? (
           <button className="btn block" onClick={promoteToLibrary} disabled={busy}>

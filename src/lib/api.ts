@@ -167,6 +167,30 @@ export async function updateFood(id: string, input: Partial<FoodInput>): Promise
 }
 
 /**
+ * Corrects whether a food's numbers are an estimate, and carries the
+ * correction onto every entry already logged from it.
+ *
+ * Entries snapshot the flag when logged, so fixing only the food would leave
+ * the mistake in exactly the place it matters: the dashboard's estimated
+ * share is computed from entries. The macros in those snapshots stay
+ * untouched -- this is a correction to where the numbers came from, not to
+ * the numbers. Returns how many entries changed.
+ */
+export async function setFoodEstimate(foodId: string, isEstimate: boolean): Promise<number> {
+  const { error } = await supabase.from('foods').update({ is_estimate: isEstimate }).eq('id', foodId)
+  if (error) fail('Could not update the food', error)
+
+  const { data, error: entriesError } = await supabase
+    .from('log_entries')
+    .update({ s_is_estimate: isEstimate })
+    .eq('food_id', foodId)
+    .neq('s_is_estimate', isEstimate)
+    .select('id')
+  if (entriesError) fail('Could not update the entries logged from that food', entriesError)
+  return data?.length ?? 0
+}
+
+/**
  * Archive, never delete. Logged history keeps its own snapshot, but an
  * accidental delete would still lose the row a future entry could reuse.
  */
@@ -248,6 +272,12 @@ export interface EntryEdit {
   multiplier?: number
   eaten_on?: IsoDate
   note?: string | null
+  /**
+   * The one snapshot field that may change: whether the numbers were an
+   * estimate is provenance, and a wrong flag skews the estimated share. The
+   * numbers themselves stay as captured.
+   */
+  s_is_estimate?: boolean
 }
 
 export async function updateEntry(id: string, edit: EntryEdit): Promise<LogEntry> {

@@ -26,6 +26,7 @@ multiplier preset → `Save`.
 - [Secrets](#secrets)
 - [Local development](#local-development)
 - [Phase 2: photo and text extraction](#phase-2-photo-and-text-extraction)
+- [Weekly summary email](#weekly-summary-email)
 - [Data model notes](#data-model-notes)
 - [Project layout](#project-layout)
 
@@ -267,6 +268,13 @@ read off something (a label, a restaurant's published figures, your own scale).
 The extraction paths set it, and the **This is an estimate** box is there to
 correct them.
 
+**Correcting a wrong flag.** A label photographed through the plate button is
+filed as a guess. On the Foods page, untick **Estimate** on that food: it fixes
+the food *and* every entry already logged from it, since entries carry their
+own copy of the flag and the estimated share is computed from entries. A
+single entry, including a one-off, has the same tick in its edit sheet on
+Today. Only the flag changes; the logged numbers stay as captured.
+
 It exists for the DEXA comparison. If a block's mean disagrees with a scan, the
 first question is how much of that mean was guesswork. So the block view says,
 directly under the mean:
@@ -470,11 +478,12 @@ and Cloudflare Workers Builds runs `npm run build` on every push, so a failing
 test fails the deploy. Tests that nothing runs are documentation, and this
 project deploys straight from a push with no other gate.
 
-Four suites, all fast and offline — no network, no database, no browser:
+Five suites, all fast and offline — no network, no database, no browser:
 
 | File | Covers |
 |---|---|
 | `src/lib/logic.test.ts` | Block aggregation and its estimated share, calendar arithmetic across DST and month ends, multiplier parsing and rendering |
+| `scripts/summary/summary.test.mjs` | The weekly email: the 8am schedule across daylight saving, every figure, escaping, the chart's geometry |
 | `src/lib/meals.test.ts` | Saved meals write exactly the entries logging each food would: snapshots, servings, archived foods, making one from Today |
 | `src/lib/extract.test.ts` | The client transport: ndjson streaming, the buffered fallback, and normalising a reply |
 | `worker/extract.test.ts` | Reading figures out of what a person or a model actually wrote |
@@ -626,6 +635,75 @@ The model and base URL are non-sensitive and live in `wrangler.jsonc` under
 
 ---
 
+## Weekly summary email
+
+Every Saturday at 8am California time a GitHub Actions job emails a 21-day
+summary to `GMAIL_USER`: the same block the dashboard shows, ending on Friday
+so every day in it is complete.
+
+### How the summary is made
+
+`scripts/summary/compute.mjs` turns the rows into numbers, and
+`scripts/summary/render.mjs` turns the numbers into the email. The rules are
+the app's own, so the email and the dashboard never disagree:
+
+- **The window** is the 21 days ending yesterday (Friday, for the scheduled
+  run). Days before the very first entry are shown as *before you started*,
+  not as missed.
+- **Unlogged days are absent, never zero.** Mean and median cover logged days
+  only. The mean is also given without the single biggest day when that day
+  moves it by 25 kcal or more, since one restaurant dinner can.
+- **Each day is scored against the target in effect that day**, so a ceiling
+  change mid-block is shown as a step in the chart rather than re-scoring the
+  earlier days.
+- **Estimated** means the entry was filed as a calorie estimate. Its share is
+  by calories, not days, and the biggest day's estimated items are named.
+- **Fiber** counts unrecorded entries as zero, so it is reported as a floor,
+  with how many entries actually recorded it.
+- **Energy split** uses 4 kcal per gram of protein and carbs and 9 for fat.
+- **Where the calories came from** ranks foods by the calories they added,
+  and, once migration 0005 is run, the share of each saved meal's foods and
+  the days all of them were eaten together.
+
+Every email ends with this method in short, so the numbers can always be
+checked. The *Reading this against a DEXA scan* notes from the one-off
+infographic are deliberately left out.
+
+Email clients run no JavaScript and Gmail drops SVG, so the email is tables
+and inline styles throughout, the chart included, in a fixed light design.
+
+### Setting it up
+
+Add these as repository secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `GMAIL_USER` | The Gmail address it sends from and to |
+| `GMAIL_APP_PASSWORD` | A Gmail [app password](https://myaccount.google.com/apppasswords), not your normal password |
+| `SUPABASE_URL` | The same Project URL the app is built with |
+| `SUPABASE_ANON_KEY` | The same anon / publishable key |
+| `FOOD_LOG_PASSWORD` | The password you sign in to the app with |
+| `FOOD_LOG_EMAIL` | Optional: the app sign-in email, if it is not `GMAIL_USER` |
+
+It reads with the app's own account, so Row Level Security applies exactly as
+in the app; the `service_role` key is not used. To check it works, open the
+Actions tab → *Weekly summary* → **Run workflow**, which sends one at once.
+Locally, `npm run summary -- --dry-run` writes the email to `summary.html`
+instead of sending it.
+
+**Scheduling.** GitHub's cron is UTC only, and 8am in California is 15:00 UTC
+in summer and 16:00 in winter. Both are scheduled; the script keeps the one
+that is 8am locally that week, deciding by which schedule fired rather than by
+the clock, so a run GitHub starts late is neither dropped nor doubled.
+Scheduled runs only happen on the default branch, and GitHub pauses them after
+60 days without a commit to the repository.
+
+**This repository is public, so its Actions logs are too.** The job prints
+dates and outcomes only, never anything read from the log, and uploads no
+artifacts. The emailed figures exist only in the email.
+
+---
+
 ## Data model notes
 
 Three concerns, kept separate: what a food **is**, what was **eaten**, and what
@@ -732,6 +810,8 @@ supabase/
   migrations/              Schema, views, RLS; run in numeric order
   seed.sql                 Opening targets
 
+scripts/summary/          Weekly summary email: compute, render, send
+.github/workflows/         The Saturday 8am job
 scripts/generate-icons.mjs PNG icon generator (no image dependency)
 scripts/sw-cleanup-test.mjs Browser test for the service-worker removal
 
