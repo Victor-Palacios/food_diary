@@ -252,8 +252,11 @@ function method() {
   return card(`${h2('How this summary is made')}<ul style="margin:6px 0 0 0;padding:0 0 0 18px;font-size:13px;color:${C.dim};line-height:1.5">${METHOD.map((m) => `<li style="margin:0 0 5px 0">${escapeHtml(m)}</li>`).join('')}</ul>`)
 }
 
+/** Shown in the inbox and atop the email, so the summary is easy to spot. */
+export const EMOJI = '🥗'
+
 export function subject(s) {
-  return `Food Log: ${short(s.start)} – ${short(s.end)} · median ${fmt(s.kcal.median)} kcal/day`
+  return `${EMOJI} Food Log: ${short(s.start)} – ${short(s.end)} · median ${fmt(s.kcal.median)} kcal/day`
 }
 
 export function renderEmail(s) {
@@ -267,7 +270,7 @@ export function renderEmail(s) {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px">
 <tr><td style="padding:0 2px 16px 2px">
   <div style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:${C.accent}">Food Log &middot; Weekly summary</div>
-  <div style="font-size:32px;font-weight:700;color:${C.text};line-height:1.1;margin-top:6px">${short(s.start)} – ${short(s.end)}</div>
+  <div style="font-size:32px;font-weight:700;color:${C.text};line-height:1.1;margin-top:6px"><span role="img" aria-label="salad">${EMOJI}</span> ${short(s.start)} – ${short(s.end)}</div>
   <div style="font-size:14px;color:${C.dim};line-height:1.45;margin-top:8px">Your weekly summary, read straight from your log.</div>
 </td></tr>
 ${body}

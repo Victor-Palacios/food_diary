@@ -250,6 +250,6 @@ describe('the email', () => {
     expect(raw).toContain('Content-Type: text/html')
     expect(raw).toContain('Content-Type: text/plain')
     expect(info.envelope.to).toEqual(['me@example.com'])
-    expect(subject(s)).toBe('Food Log: Oct 3 – Oct 9 · median 2,200 kcal/day')
+    expect(subject(s)).toBe('🥗 Food Log: Oct 3 – Oct 9 · median 2,200 kcal/day')
   })
 })
