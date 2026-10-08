@@ -1,4 +1,4 @@
-# Emails the 21-day summary every Saturday at 8am California time.
+# Emails the past week's summary every Saturday at 8am California time.
 #
 # GitHub's cron is UTC only and California moves between UTC-7 and UTC-8, so
 # both 8am candidates are scheduled and the script keeps the one that is 8am

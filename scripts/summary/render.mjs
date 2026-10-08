@@ -3,7 +3,7 @@
  *
  * Email is a hostile medium for a chart: no JavaScript, no web fonts, and
  * Gmail drops SVG entirely. So everything here is tables and inline styles,
- * and the 21-day chart is built from stacked table-cell divs. It is a fixed
+ * and the daily chart is built from stacked table-cell divs. It is a fixed
  * light design with explicit colors, because mail clients invert dark themes
  * unpredictably.
  *
@@ -55,12 +55,11 @@ const key = (color, label, line = false) =>
 // ---------------------------------------------------------------------------
 
 const CHART_H = 150
-const BAR_W = 12
 
 /**
  * One day's column, top to bottom, as solid runs of color. The ceiling line
  * spans the whole cell so it reads as one line across the chart; bar runs
- * are a 12px block centred in it. The estimated part sits on top of the
+ * are a block centred in it, wider when there are fewer days. The estimated part sits on top of the
  * measured part with a 2px gap, matching the app.
  */
 export function columnRuns(day, yMax) {
@@ -103,6 +102,7 @@ function chart(s) {
   const peakKcal = s.peak ? s.peak.kcal : 0
   const yMax = Math.max(3000, Math.ceil((Math.max(peakKcal, s.ceiling ?? 0) + 250) / 500) * 500)
   const width = (100 / s.days.length).toFixed(3) + '%'
+  const barW = s.days.length <= 7 ? 28 : 12
 
   const cols = s.days.map((d) => {
     const runs = columnRuns(d, yMax)
@@ -113,20 +113,19 @@ function chart(s) {
       if (r.color === 'line') return `<div style="height:${r.h}px;line-height:${r.h}px;font-size:0;background:${C.ceiling}"></div>`
       const fill = { measured: C.measured, estimated: C.estimated, missed: C.warn }[r.color]
       if (!fill) return `<div style="height:${r.h}px;line-height:${r.h}px;font-size:0"></div>`
-      return `<div style="height:${r.h}px;line-height:${r.h}px;font-size:0"><div style="width:${BAR_W}px;height:${r.h}px;margin:0 auto;background:${fill};${radius}"></div></div>`
+      return `<div style="height:${r.h}px;line-height:${r.h}px;font-size:0"><div style="width:${barW}px;height:${r.h}px;margin:0 auto;background:${fill};${radius}"></div></div>`
     }).join('')
     return `<td valign="bottom" style="width:${width};padding:0;background:${cellBg}">${inner}</td>`
   }).join('')
 
   const peakRow = s.days.map((d) => `<td align="center" style="padding:0 0 3px 0;font-size:10.5px;font-weight:700;color:${C.text};white-space:nowrap">${s.peak && d.date === s.peak.date ? fmt(d.kcal) : ''}</td>`).join('')
-  const dayRow = s.days.map((d) => {
-    const monday = new Date(d.date + 'T12:00:00Z').getUTCDay() === 1
-    return `<td align="center" style="padding:5px 0 0 0;font-size:10px;color:${monday ? C.dim : C.faint};font-weight:${monday ? 700 : 400}">${Number(d.date.slice(8))}</td>`
-  }).join('')
+  const dayRow = s.days.map((d) =>
+    `<td align="center" style="padding:5px 0 0 0;font-size:11px;line-height:1.3;color:${C.dim}"><b>${dateLabel(d.date, { weekday: 'short' })}</b><br>${short(d.date)}</td>`,
+  ).join('')
 
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed;border-bottom:1px solid ${C.border}"><tr>${peakRow}</tr><tr>${cols}</tr></table>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed"><tr>${dayRow}</tr></table>
-<div style="font-size:11.5px;color:${C.faint};margin:6px 0 0 0">Day of the month, ${short(s.start)} to ${short(s.end)}. Mondays in bold. The scale runs to ${fmt(yMax)} kcal.</div>`
+<div style="font-size:11.5px;color:${C.faint};margin:6px 0 0 0">The scale runs to ${fmt(yMax)} kcal.</div>`
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +181,7 @@ function chartCard(s) {
     callout = `<div style="margin-top:14px;padding-left:12px;border-left:2px solid ${C.estimated};font-size:13.5px;color:${C.dim};line-height:1.45"><b style="color:${C.text}">${long(p.date)} was the biggest day: ${fmt(p.kcal)} kcal</b>${over}.${est}</div>`
   }
 
-  return card(`${h2('Every day in the block')}${sub(`Calories per day against the ceiling in effect that day.${change}`)}
+  return card(`${h2('Every day this week')}${sub(`Calories per day against the ceiling in effect that day.${change}`)}
     <div style="margin:0 0 10px 0">${key(C.measured, 'From a label or your own figures')}${key(C.estimated, 'Estimated')}${key(C.ceiling, 'Ceiling', true)}</div>
     ${chart(s)}${callout}`)
 }
@@ -241,7 +240,7 @@ function dailyTable(s) {
 
 /** The note on method, in every email, so the numbers can always be checked. */
 export const METHOD = [
-  'Read from your Food Log when it was sent: the 21 days ending the day before, so every day in it is complete. The scheduled email goes out on Saturday morning and covers the 21 days ending Friday.',
+  'Read from your Food Log when it was sent: the 7 days ending the day before, so every day in it is complete. The scheduled email goes out on Saturday morning and covers Saturday to Friday.',
   'Days you didn’t log are left out of the averages, never counted as zero. Days before your first entry are marked as such, not as missed.',
   'Each day is compared with the target in effect on that day.',
   '“Estimated” means the entry was filed as a calorie estimate: a plate photo, or a description the model had to guess at. Its share is measured in calories, not days. If something is marked wrongly, untick it on the Foods page; that corrects the past entries too.',
@@ -267,7 +266,7 @@ export function renderEmail(s) {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.bg}"><tr><td align="center" style="padding:24px 12px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px">
 <tr><td style="padding:0 2px 16px 2px">
-  <div style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:${C.accent}">Food Log &middot; 21-day block</div>
+  <div style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:${C.accent}">Food Log &middot; Weekly summary</div>
   <div style="font-size:32px;font-weight:700;color:${C.text};line-height:1.1;margin-top:6px">${short(s.start)} – ${short(s.end)}</div>
   <div style="font-size:14px;color:${C.dim};line-height:1.45;margin-top:8px">Your weekly summary, read straight from your log.</div>
 </td></tr>

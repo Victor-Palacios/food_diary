@@ -637,9 +637,9 @@ The model and base URL are non-sensitive and live in `wrangler.jsonc` under
 
 ## Weekly summary email
 
-Every Saturday at 8am California time a GitHub Actions job emails a 21-day
-summary to `GMAIL_USER`: the same block the dashboard shows, ending on Friday
-so every day in it is complete.
+Every Saturday at 8am California time a GitHub Actions job emails a summary
+of the past week to `GMAIL_USER`: Saturday to Friday, so every day in it is
+complete.
 
 ### How the summary is made
 
@@ -647,8 +647,9 @@ so every day in it is complete.
 `scripts/summary/render.mjs` turns the numbers into the email. The rules are
 the app's own, so the email and the dashboard never disagree:
 
-- **The window** is the 21 days ending yesterday (Friday, for the scheduled
-  run). Days before the very first entry are shown as *before you started*,
+- **The window** is the 7 days ending yesterday (Saturday to Friday, for the
+  scheduled run). The 21-day block for the DEXA comparison stays on the
+  dashboard. Days before the very first entry are shown as *before you started*,
   not as missed.
 - **Unlogged days are absent, never zero.** Mean and median cover logged days
   only. The mean is also given without the single biggest day when that day

@@ -68,12 +68,12 @@ describe('when the scheduled email goes out', () => {
 })
 
 describe('the numbers', () => {
-  const start = addDays(END, -20)
+  const start = addDays(END, -6)
 
-  it('covers the 21 days ending on the last day', () => {
+  it('covers the 7 days ending on the last day, Saturday to Friday', () => {
     const s = computeSummary({ entries: [], targets: [T_OLD], end: END, firstEver: start })
-    expect(s.start).toBe('2026-09-19')
-    expect(s.days).toHaveLength(21)
+    expect(s.start).toBe('2026-10-03')
+    expect(s.days).toHaveLength(7)
     expect(s.days.at(-1).date).toBe(END)
   })
 
@@ -90,24 +90,25 @@ describe('the numbers', () => {
   })
 
   it('marks days before the first entry as before, not missed', () => {
-    const first = addDays(start, 5)
+    const first = addDays(start, 2)
     const s = computeSummary({ entries: [entry(first, 2000), entry(END, 2000)], targets: [T_OLD], end: END, firstEver: first })
-    expect(s.before).toBe(5)
-    expect(s.missed).toHaveLength(21 - 5 - 2)
+    expect(s.before).toBe(2)
+    expect(s.missed).toHaveLength(7 - 2 - 2)
     expect(s.days[0].state).toBe('before')
-    expect(s.days[6].state).toBe('missed')
+    expect(s.days[3].state).toBe('missed')
   })
 
   it('scores each day against the target in effect that day', () => {
     // 2,250 is under the old 2,300 ceiling and over the new 2,200 one.
+    const T_MID = { ...T_NEW, effective_from: '2026-10-06' }
     const s = computeSummary({
-      entries: [entry('2026-09-27', 2250), entry('2026-09-28', 2250)],
-      targets: [T_OLD, T_NEW],
+      entries: [entry('2026-10-05', 2250), entry('2026-10-06', 2250)],
+      targets: [T_OLD, T_MID],
       end: END,
-      firstEver: '2026-09-27',
+      firstEver: '2026-10-05',
     })
     expect(s.kcal.overCeiling).toBe(1)
-    expect(s.ceilingChanges).toEqual([{ date: '2026-09-28', from: 2300, to: 2200 }])
+    expect(s.ceilingChanges).toEqual([{ date: '2026-10-06', from: 2300, to: 2200 }])
     expect(s.ceiling).toBe(2200)
   })
 
@@ -139,15 +140,15 @@ describe('the numbers', () => {
     const s = computeSummary({
       entries: [
         entry(END, 2000),
-        entry('2026-09-30', 700),
-        entry('2026-09-30', 1600, { s_is_estimate: true, label: 'mole and churros' }),
-        entry('2026-09-30', 859, { s_is_estimate: true, label: 'fried rice' }),
+        entry('2026-10-07', 700),
+        entry('2026-10-07', 1600, { s_is_estimate: true, label: 'mole and churros' }),
+        entry('2026-10-07', 859, { s_is_estimate: true, label: 'fried rice' }),
       ],
       targets: [T_NEW],
       end: END,
       firstEver: '2026-09-01',
     })
-    expect(s.peak.date).toBe('2026-09-30')
+    expect(s.peak.date).toBe('2026-10-07')
     expect(s.peak.kcal).toBe(3159)
     expect(s.peak.estimatedItems.map((i) => i.label)).toEqual(['mole and churros', 'fried rice'])
     expect(s.kcal.meanWithoutPeak).toBe(2000)
@@ -249,6 +250,6 @@ describe('the email', () => {
     expect(raw).toContain('Content-Type: text/html')
     expect(raw).toContain('Content-Type: text/plain')
     expect(info.envelope.to).toEqual(['me@example.com'])
-    expect(subject(s)).toBe('Food Log: Sep 19 – Oct 9 · median 2,200 kcal/day')
+    expect(subject(s)).toBe('Food Log: Oct 3 – Oct 9 · median 2,200 kcal/day')
   })
 })

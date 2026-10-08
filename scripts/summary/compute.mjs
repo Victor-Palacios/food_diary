@@ -13,7 +13,8 @@
  * See "Weekly summary email" in the README for how the email is put together.
  */
 
-export const BLOCK_DAYS = 21
+/** A week: the email goes out on Saturday and covers Saturday to Friday. */
+export const SUMMARY_DAYS = 7
 
 const DAY_MS = 86_400_000
 
@@ -58,15 +59,15 @@ export function targetOn(targets, date) {
  * @param {object} input
  * @param {Array<object>} input.entries   log_entries rows (PostgREST shape; numerics may be strings)
  * @param {Array<object>} input.targets   targets rows
- * @param {string} input.end              last day of the block, YYYY-MM-DD
+ * @param {string} input.end              last day of the summary, YYYY-MM-DD
  * @param {string|null} input.firstEver   the earliest eaten_on in the whole log
  * @param {Array<{name: string, foodIds: string[]}>|null} input.meals  saved meals, or null if unavailable
  */
-export function computeSummary({ entries, targets, end, firstEver, meals = null }) {
-  const start = addDays(end, -(BLOCK_DAYS - 1))
+export function computeSummary({ entries, targets, end, firstEver, meals = null, length = SUMMARY_DAYS }) {
+  const start = addDays(end, -(length - 1))
   const inWindow = entries.filter((e) => e.eaten_on >= start && e.eaten_on <= end)
 
-  const days = Array.from({ length: BLOCK_DAYS }, (_, i) => {
+  const days = Array.from({ length }, (_, i) => {
     const date = addDays(start, i)
     const es = inWindow.filter((e) => e.eaten_on === date)
     const sum = (k) => es.reduce((a, e) => a + n(e[k]), 0)
@@ -98,7 +99,7 @@ export function computeSummary({ entries, targets, end, firstEver, meals = null 
   const logged = days.filter((d) => d.state === 'logged')
   const totalKcal = logged.reduce((a, d) => a + d.kcal, 0)
 
-  // Consecutive logged days ending on the block's last day.
+  // Consecutive logged days ending on the summary's last day.
   let run = 0
   for (let i = days.length - 1; i >= 0 && days[i].state === 'logged'; i--) run++
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Weekly summary email: read the log, compute the 21-day summary, send it.
+ * Weekly summary email: read the log, compute the past week's summary, send it.
  *
  *   node scripts/summary/send.mjs                    send it now
  *   node scripts/summary/send.mjs --dry-run          write the email to summary.html instead
@@ -24,7 +24,7 @@ import { writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { createClient } from '@supabase/supabase-js'
 import nodemailer from 'nodemailer'
-import { BLOCK_DAYS, addDays, computeSummary, localDate } from './compute.mjs'
+import { SUMMARY_DAYS, addDays, computeSummary, localDate } from './compute.mjs'
 import { renderEmail, renderText, subject } from './render.mjs'
 
 export const TIME_ZONE = 'America/Los_Angeles'
@@ -121,9 +121,9 @@ async function main() {
   const email = process.env.FOOD_LOG_EMAIL || process.env.GMAIL_USER
   if (!email) throw new Error('Missing FOOD_LOG_EMAIL (or GMAIL_USER to default it to).')
 
-  // Yesterday in California, so every day in the block is complete.
+  // Yesterday in California, so every day in the week is complete.
   const end = args.end ?? addDays(localDate(now, TIME_ZONE), -1)
-  const start = addDays(end, -(BLOCK_DAYS - 1))
+  const start = addDays(end, -(SUMMARY_DAYS - 1))
 
   const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
