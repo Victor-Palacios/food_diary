@@ -42,7 +42,7 @@ export const TIMEZONE: string = env.VITE_TIMEZONE || 'America/Los_Angeles'
 export const BLOCK_DAYS = 21
 
 /** Quick-tap multiplier presets. These cover the overwhelming majority of use. */
-export const MULTIPLIER_PRESETS = [0.5, 1, 1.5, 2, 3]
+export const MULTIPLIER_PRESETS = [0.5, 1, 2, 3, 4]
 
 /** numeric(5,2) in the database, and the CHECK is `> 0 and <= 20`. */
 export const MULTIPLIER_MIN = 0.01
