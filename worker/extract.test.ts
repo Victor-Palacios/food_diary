@@ -505,3 +505,115 @@ describe('metric labels never bind across a line break', () => {
     expect(readStatedValues('47 g of protein').protein_g).toBe(47)
   })
 })
+
+/**
+ * The sentence a person writes when copying a label out by hand. It broke the
+ * parser five ways at once: total fat's breakdown in parentheses without the
+ * word "fat", fiber with a word in front of it, nutrients this app ignores
+ * leaking into the name, and a serving phrased in passing.
+ */
+describe('a nutrition label written out as a sentence', () => {
+  const PIE =
+    'Apple Crumble Mini Pie, and one 81 g serving has 290 calories, 13 g total fat (7 g saturated, 0 g trans), ' +
+    '15 mg cholesterol, 210 mg sodium, 40 g carbohydrates, 2 g dietary fiber, and 17 g sugars, along with 3 g of protein.'
+
+  it('reads every figure, including the ones in the parentheses', () => {
+    expect(readStatedValues(PIE)).toEqual({
+      calories: 290,
+      fat_total_g: 13,
+      fat_sat_g: 7,
+      fat_trans_g: 0,
+      carbs_g: 40,
+      fiber_g: 2,
+      protein_g: 3,
+    })
+  })
+
+  it('answers locally with the right name, serving and no false "not mentioned" note', () => {
+    const local = transcribeLocally(PIE)
+    expect(local?.ok).toBe(true)
+    if (!local?.ok) return
+    expect(local.result.name).toBe('Apple Crumble Mini Pie')
+    expect(local.result.serving_label).toBe('81 g')
+    expect(local.result.estimated).toBe(false)
+    // Saturated and trans were both stated, so nothing was filled in.
+    expect(local.result.notes).toBe('Read straight from your text.')
+  })
+
+  it('does not read cholesterol, sodium or sugars as anything it tracks', () => {
+    const v = readStatedValues(PIE)
+    for (const n of [15, 210, 17]) expect(Object.values(v)).not.toContain(n)
+  })
+})
+
+describe('the ways people name each figure', () => {
+  // The same label, written five ways. Every one must read identically.
+  const SAME_LABEL = [
+    'Calories 290, Total Fat 13g, Saturated Fat 7g, Trans Fat 0g, Total Carbohydrate 40g, Dietary Fiber 2g, Protein 3g',
+    '290 calories, 13 g total fat (7 g saturated, 0 g trans), 40 g carbohydrates, 2 g dietary fiber, 3 g of protein',
+    'calories: 290\nfat: 13g\nsaturated fat: 7g\ntrans fat: 0g\ncarbs: 40g\nfiber: 2g\nprotein: 3g',
+    '290 kcal · 13g fat · 7g sat fat · 0g trans-fat · 40g carbs · 2g fibre · 3g protein',
+    '|Calories|290|\n|Total Fat|13 g|\n|Saturated Fat|7 g|\n|Trans Fat|0 g|\n|Carbohydrates|40 g|\n|Fiber|2 g|\n|Protein|3 g|',
+  ]
+  const EXPECTED = { calories: 290, fat_total_g: 13, fat_sat_g: 7, fat_trans_g: 0, carbs_g: 40, fiber_g: 2, protein_g: 3 }
+
+  for (const text of SAME_LABEL) {
+    it(`reads: ${text.split('\n')[0].slice(0, 60)}`, () => {
+      expect(readStatedValues(text)).toEqual(EXPECTED)
+    })
+  }
+
+  it('reads "total carbohydrates" with the word in front', () => {
+    expect(readStatedValues('40 g total carbohydrates').carbs_g).toBe(40)
+  })
+
+  it('reads British "dietary fibre"', () => {
+    expect(readStatedValues('Dietary Fibre 3g').fiber_g).toBe(3)
+  })
+
+  it('does not read polyunsaturated or monounsaturated fat as saturated', () => {
+    const v = readStatedValues('Total Fat 13g, Polyunsaturated Fat 2g, Monounsaturated Fat 3g, Saturated Fat 7g')
+    expect(v.fat_sat_g).toBe(7)
+    expect(v.fat_total_g).toBe(13)
+  })
+
+  it('leaves saturated fat unset when only the unsaturated kinds are given', () => {
+    expect(readStatedValues('Polyunsaturated Fat 2g, Monounsaturated Fat 3g').fat_sat_g).toBeUndefined()
+  })
+
+  it('does not read "Sat" for Saturday as saturated fat', () => {
+    expect(readStatedValues('Sat 4 Oct: 500 cal, 20g protein, 50g carbs, 10g fat').fat_sat_g).toBeUndefined()
+  })
+
+  it('does not read the saturated figure as total fat', () => {
+    // Saturated is consumed first, so the bare "fat" pattern cannot reach it.
+    expect(readStatedValues('7 g saturated, 13 g fat').fat_total_g).toBe(13)
+  })
+})
+
+describe('names and servings in a sentence', () => {
+  it('keeps a name that has its own commas', () => {
+    expect(deriveName('Salmon, rice and broccoli, 500 cal, 30g protein, 40g carbs, 20g fat')).toBe(
+      'Salmon, rice and broccoli',
+    )
+  })
+
+  it('drops the connecting words between the figures', () => {
+    expect(deriveName('Greek yogurt bowl, which has 300 calories and 25 g protein along with 30 g carbs')).toBe(
+      'Greek yogurt bowl',
+    )
+  })
+
+  it('drops figures for nutrients the app does not track', () => {
+    expect(deriveName('Tomato soup, 120 calories, 480 mg sodium, 8 g sugars')).toBe('Tomato soup')
+  })
+
+  it('reads a serving given in passing', () => {
+    expect(deriveServing('one 81 g serving has 290 calories')).toBe('81 g')
+    expect(deriveServing('a 2 slice serving is 300 cal')).toBe('2 slice')
+  })
+
+  it('prefers an explicit serving label over one in passing', () => {
+    expect(deriveServing('Serving size: 1 pie\none 81 g serving has 290 calories')).toBe('1 pie')
+  })
+})

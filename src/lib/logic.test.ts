@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { aggregate, mean, median, scale, sumNutrition } from './stats'
 import { addDays, dateRange, daysBetween, endOfMonth, endOfWeek, startOfMonth, startOfWeek } from './dates'
 import { formatMultiplier, formatPercent, parseMultiplier, parseNumber } from './format'
+import { MULTIPLIER_PRESETS } from './config'
 import type { DailyTotals } from './types'
 
 /**
@@ -165,6 +166,20 @@ describe('calendar arithmetic', () => {
 
   it('rejects a malformed date rather than guessing', () => {
     expect(() => addDays('not-a-date', 1)).toThrow()
+  })
+})
+
+describe('the serving buttons', () => {
+  it('offers ½x, 1x, 2x, 3x and 4x, in that order', () => {
+    // 4x is breakfast fruit; 1½x was dropped for it and stays one tap away
+    // in "other".
+    expect(MULTIPLIER_PRESETS).toEqual([0.5, 1, 2, 3, 4])
+    expect(MULTIPLIER_PRESETS.map(formatMultiplier)).toEqual(['½x', '1x', '2x', '3x', '4x'])
+  })
+
+  it('still accepts 1½ typed into "other"', () => {
+    expect(parseMultiplier('1.5')).toBe(1.5)
+    expect(parseMultiplier('1 1/2')).toBe(1.5)
   })
 })
 

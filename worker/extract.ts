@@ -420,21 +420,39 @@ export function transcribeLocally(description: string): Final | null {
   }
 }
 
+/**
+ * Words that join a sentence's figures together and are never part of a
+ * dish's name: what is left of "Apple Crumble Mini Pie, and one 81 g serving
+ * has 290 calories, ... along with 3 g of protein" once the figures go.
+ */
+const NAME_FILLER = new Set(
+  'a an and or of the per each one has have had with along plus contains containing includes including also its it this that which is are serving servings total'.split(
+    ' ',
+  ),
+)
+
 /** Strips the figures and the boilerplate, leaving what the food is called. */
 export function deriveName(text: string): string {
   let t = text.replace(/\*+/g, ' ')
 
-  // Remove "<metric> ...: <number><unit>" pairs, whichever way round.
+  // Every figure a label or a sentence can carry, tracked or not. The ones
+  // this app ignores (cholesterol, sodium, sugars) still have to go, or
+  // "15 mg cholesterol" survives into the name.
   const metrics =
-    'calories|kcals?|cals?|protein|carbohydrates?|carbs?|total fat|saturated fat|sat\.? ?fat|trans ?fat|fat|fibre|fiber'
+    'calories|kcals?|cals?|protein|total carbohydrates?|total carbs?|carbohydrates?|carbs?|total fat|saturated fat|sat\\.? ?fat|saturated|trans[ -]?fat|trans|fat|dietary fib(?:er|re)|fibre|fiber|cholesterol|sodium|potassium|calcium|iron|(?:total |added )?sugars?'
+  const units = '(?:g|mg|mcg|grams?|milligrams?|kcals?|cals?)'
+
+  // Remove "<metric> ...: <number><unit>" pairs, whichever way round.
   t = t.replace(
-    new RegExp(`\\b(?:${metrics})\\b[^:\\n\\d]{0,18}[:=]?[^\\S\\n]*\\d+(?:\\.\\d+)?[^\\S\\n]*(?:g|grams?|kcals?|cals?)?`, 'gi'),
+    new RegExp(`\\b(?:${metrics})\\b[^:\\n\\d]{0,18}[:=]?[^\\S\\n]*\\d+(?:\\.\\d+)?[^\\S\\n]*${units}?`, 'gi'),
     ' ',
   )
   t = t.replace(
-    new RegExp(`\\d+(?:\\.\\d+)?[^\\S\\n]*(?:g|grams?|kcals?|cals?)?[^\\S\\n]*(?:of[^\\S\\n]+)?(?:${metrics})\\b`, 'gi'),
+    new RegExp(`\\d+(?:\\.\\d+)?[^\\S\\n]*${units}?[^\\S\\n]*(?:of[^\\S\\n]+)?(?:${metrics})\\b`, 'gi'),
     ' ',
   )
+  // "one 81 g serving", "a 2 slice serving": the serving, not the name.
+  t = t.replace(/\b\d+(?:\.\d+)?[^\S\n]*(?:g|grams?|oz|ounces?|ml|cups?|pieces?|slices?)?[^\S\n]+servings?\b/gi, ' ')
   // Remove the labels that introduce those figures. "facts" and "label" earn
   // their place here: without them, "Here are the facts: ..." leaves the word
   // "facts" behind and it wins the longest-fragment contest against a short
@@ -444,24 +462,46 @@ export function deriveName(text: string): string {
     ' ',
   )
 
-  const fragments = t
-    .split(/[\n•·|]+/)
-    .map((part) =>
-      part
-        .replace(/\s+/g, ' ')
-        // Lead-ins people actually type before the real name.
-        .replace(/^\s*(?:here (?:are|is)|this is (?:for|from)|these are)\b[^a-z0-9]*/i, '')
-        .replace(/^\s*from the label\b[^a-z0-9]*/i, '')
-        .replace(/^\s*the\s+/i, '')
-        .replace(/^[^a-z0-9]+/i, '')
-        .replace(/[\s:,.;-]+$/, '')
-        .trim(),
-    )
-    .filter((part) => part.length > 2)
+  const clean = (part: string) =>
+    part
+      .replace(/\s+/g, ' ')
+      // Lead-ins people actually type before the real name.
+      .replace(/^\s*(?:here (?:are|is)|this is (?:for|from)|these are)\b[^a-z0-9]*/i, '')
+      .replace(/^\s*from the label\b[^a-z0-9]*/i, '')
+      .replace(/^\s*the\s+/i, '')
+      .replace(/^[^a-z0-9]+/i, '')
+      .replace(/[\s:,.;-]+$/, '')
+      .trim()
 
-  // The longest surviving fragment is the dish; the rest is scaffolding.
-  fragments.sort((a, b) => b.length - a.length)
-  return fragments[0] ?? ''
+  // A piece is filler when nothing in it could be part of a name.
+  const isFiller = (part: string) => {
+    const words = part.toLowerCase().match(/[a-z]+/g)
+    return !words || words.every((w) => NAME_FILLER.has(w))
+  }
+
+  // Within a line, a sentence's commas and parentheses separate its figures.
+  // Split on them, drop the pieces that are only filler, and rejoin the runs
+  // of real pieces that sat next to each other -- so "Salmon, rice and
+  // broccoli" stays whole while "Apple Crumble Mini Pie, and one ... has"
+  // loses its tail.
+  const candidates: string[] = []
+  for (const line of t.split(/[\n•·|]+/)) {
+    let run: string[] = []
+    for (const piece of line.split(/[,()]+/)) {
+      const part = clean(piece)
+      if (part.length > 0 && !isFiller(part)) {
+        run.push(part)
+      } else if (run.length) {
+        candidates.push(run.join(', '))
+        run = []
+      }
+    }
+    if (run.length) candidates.push(run.join(', '))
+  }
+
+  // The longest surviving candidate is the dish; the rest is scaffolding.
+  const names = candidates.filter((c) => c.length > 2).sort((a, b) => b.length - a.length)
+  return names[0] ?? ''
 }
 
 export function deriveServing(text: string): string | undefined {
@@ -470,7 +510,9 @@ export function deriveServing(text: string): string | undefined {
       text,
     ) ??
     // The column form of a pasted table: "|Serving          |18.6 oz   |".
-    /\bserving(?:[ _]?label|[ _]?size)?[^\S\n]*\|[^\S\n]*([^\n|]+)/i.exec(text)
+    /\bserving(?:[ _]?label|[ _]?size)?[^\S\n]*\|[^\S\n]*([^\n|]+)/i.exec(text) ??
+    // The sentence form: "one 81 g serving has ...", "a 2 slice serving".
+    /\b(\d+(?:\.\d+)?[^\S\n]*(?:g|grams?|oz|ounces?|ml|cups?|pieces?|slices?))[^\S\n]+serving\b/i.exec(text)
   return m?.[1]?.replace(/[\s:,.;|-]+$/, '').trim() || undefined
 }
 
@@ -886,11 +928,19 @@ const DECOYS = /calories\s+from\s+fat/gi
 const METRIC_WORDS: Array<[keyof StatedValues, string]> = [
   // Longest and most specific first: "saturated fat" must not be read as
   // plain "fat", and "total fat" must not be read as "sat fat".
-  ['fat_sat_g', 'saturated fat|sat\\.? ?fat'],
-  ['fat_trans_g', 'trans ?fat'],
-  ['fiber_g', 'fibre|fiber'],
+  //
+  // Bare "saturated" and "trans" are how a sentence breaks total fat down:
+  // "13 g total fat (7 g saturated, 0 g trans)". Without them the 7 g was
+  // dropped and recorded as 0. \b keeps "polyunsaturated" and
+  // "monounsaturated" out, since there is no word boundary inside them.
+  // Bare "sat" stays out: it is also Saturday.
+  ['fat_sat_g', 'saturated fat|sat\\.? ?fat|saturated'],
+  ['fat_trans_g', 'trans[ -]?fat|trans'],
+  // "2 g dietary fiber": a word between the number and the label defeated
+  // the number-first form, so the fiber went unrecorded.
+  ['fiber_g', 'dietary fib(?:er|re)|fibre|fiber'],
   ['protein_g', 'protein'],
-  ['carbs_g', 'carbohydrates?|carbs?'],
+  ['carbs_g', 'total carbohydrates?|total carbs?|carbohydrates?|carbs?'],
   ['fat_total_g', 'total fat|fat'],
   ['calories', 'calories|kcals?|cals?'],
 ]
