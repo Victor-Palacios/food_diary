@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { EntrySheet } from '../components/EntrySheet'
 import { SaveMealSheet } from '../components/SaveMealSheet'
-import { MacroPreview } from '../components/MacroPreview'
-import { TargetProgress } from '../components/TargetProgress'
+import { DaySummary } from '../components/DaySummary'
 import { IconBack, IconForward, IconPlus } from '../components/Icons'
 import * as api from '../lib/api'
 import { useActiveFoods, useAppData } from '../lib/AppData'
@@ -104,18 +103,12 @@ export function TodayPage() {
 
       {error ? <div className="notice error">{error}</div> : null}
 
-      <div className="card">
-        <MacroPreview nutrition={totals} detailed />
-      </div>
-
-      <div className="card">
-        <TargetProgress
-          totals={totals}
-          target={target}
-          entryCount={entries.length}
-          fiberEntryCount={totals.fiberEntryCount}
-        />
-      </div>
+      <DaySummary
+        totals={totals}
+        target={target}
+        entryCount={entries.length}
+        fiberEntryCount={totals.fiberEntryCount}
+      />
 
       <div className="list-head">
         <h2>
