@@ -100,7 +100,7 @@ export function FoodsPage() {
       ) : (
         <div className="card tight">
           {visible.map((food) => (
-            <div className="row" key={food.id}>
+            <div className="row food-row" key={food.id}>
               <button
                 className="row-main"
                 style={{ textAlign: 'left', minHeight: 40 }}

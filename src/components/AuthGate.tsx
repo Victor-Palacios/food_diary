@@ -102,7 +102,7 @@ function SignIn() {
 
         {/* Visible before sign-in, so a stale installed copy can be spotted
             without getting into the app first. */}
-        <div className="auth-sub" style={{ marginTop: 14, fontSize: 11.5 }}>
+        <div className="auth-sub" style={{ marginTop: 14, fontSize: 'calc(11.5px * var(--font-scale))' }}>
           Build {__BUILD_STAMP__}
         </div>
       </form>

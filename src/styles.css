@@ -21,6 +21,9 @@
   --danger: #f87171;
   --info: #60a5fa;
 
+  /* Every font size is multiplied by this, so text size is one setting. */
+  --font-scale: 1.5;
+
   --radius: 14px;
   --radius-sm: 10px;
   --tap: 46px;
@@ -50,7 +53,7 @@ body {
   color: var(--text);
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     'Helvetica Neue', Arial, sans-serif;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
@@ -115,7 +118,7 @@ button {
   gap: 2px;
   text-decoration: none;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -140,7 +143,7 @@ button {
   border-radius: 29px;
   background: var(--accent);
   color: var(--accent-ink);
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -203,14 +206,14 @@ button {
 }
 
 h1 {
-  font-size: 22px;
+  font-size: calc(22px * var(--font-scale));
   font-weight: 700;
   margin: 0;
   letter-spacing: -0.01em;
 }
 
 h2 {
-  font-size: 15px;
+  font-size: calc(15px * var(--font-scale));
   font-weight: 700;
   margin: 0 0 10px;
   color: var(--text-dim);
@@ -220,7 +223,7 @@ h2 {
 
 .sub {
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
 }
 
 .muted {
@@ -266,14 +269,14 @@ h2 {
 
 .row-title {
   font-weight: 600;
-  font-size: 15px;
+  font-size: calc(15px * var(--font-scale));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .row-sub {
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   color: var(--text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -289,7 +292,7 @@ h2 {
   border-radius: 6px;
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   color: var(--accent);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
@@ -337,7 +340,7 @@ button.row:active {
 /* Section labels inside the food picker: Meals, then Foods. */
 .picker-head {
   padding: 12px 14px 6px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   font-weight: 700;
   color: var(--text-dim);
   text-transform: uppercase;
@@ -408,7 +411,7 @@ button.row:active {
 .stepper button {
   width: 40px;
   height: 40px;
-  font-size: 20px;
+  font-size: calc(20px * var(--font-scale));
   font-weight: 700;
   color: var(--text);
 }
@@ -432,7 +435,7 @@ button.row:active {
   text-align: center;
   padding: 36px 20px;
   color: var(--text-faint);
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
 }
 
 /* --------------------------------------------------------------------------
@@ -447,7 +450,7 @@ button.row:active {
   border: 1px solid var(--border);
   color: var(--text);
   font-weight: 600;
-  font-size: 15px;
+  font-size: calc(15px * var(--font-scale));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -492,7 +495,7 @@ button.row:active {
 .btn.sm {
   min-height: 36px;
   padding: 0 12px;
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--font-scale));
 }
 
 /* Inline glyphs need an explicit box: an SVG with only a viewBox falls back
@@ -529,7 +532,7 @@ label.field {
 
 .field-label {
   display: block;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   font-weight: 600;
   color: var(--text-dim);
   margin-bottom: 5px;
@@ -551,7 +554,7 @@ textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   /* 16px minimum stops iOS zooming the viewport on focus. */
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
 }
 
 input:focus,
@@ -584,7 +587,7 @@ textarea {
   align-items: center;
   gap: 10px;
   min-height: var(--tap);
-  font-size: 15px;
+  font-size: calc(15px * var(--font-scale));
 }
 
 .checkbox input {
@@ -617,7 +620,7 @@ textarea {
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   border: 1.5px solid var(--border);
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -660,14 +663,14 @@ textarea {
 }
 
 .macro-v {
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale));
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
 }
 
 .macro-k {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--font-scale));
   color: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -680,7 +683,7 @@ textarea {
 }
 
 .macro.hero .macro-v {
-  font-size: 32px;
+  font-size: calc(32px * var(--font-scale));
 }
 
 /* --------------------------------------------------------------------------
@@ -697,9 +700,11 @@ textarea {
 
 .prog-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: baseline;
-  font-size: 13.5px;
+  gap: 2px 10px;
+  font-size: calc(13.5px * var(--font-scale));
   margin-bottom: 5px;
 }
 
@@ -713,7 +718,7 @@ textarea {
 }
 
 .prog-val b {
-  font-size: 15px;
+  font-size: calc(15px * var(--font-scale));
 }
 
 .prog-track {
@@ -790,7 +795,7 @@ textarea {
 .sheet-head h2 {
   margin: 0;
   flex: 1;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale));
   text-transform: none;
   letter-spacing: 0;
   color: var(--text);
@@ -888,7 +893,7 @@ textarea {
   border-radius: var(--radius-sm);
   color: var(--text-dim);
   font-weight: 600;
-  font-size: 14.5px;
+  font-size: calc(14.5px * var(--font-scale));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -917,7 +922,7 @@ textarea {
   flex: 1;
   min-height: 38px;
   border-radius: 8px;
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--font-scale));
   font-weight: 600;
   color: var(--text-dim);
 }
@@ -940,7 +945,7 @@ textarea {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   font-variant-numeric: tabular-nums;
 }
 
@@ -967,7 +972,7 @@ td:last-child {
 }
 
 th {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-faint);
@@ -1007,7 +1012,7 @@ tr.unlogged td:first-child {
 }
 
 .hero-stat .macro-v {
-  font-size: 30px;
+  font-size: calc(30px * var(--font-scale));
 }
 
 /* The estimated share sits under a figure, as a note on how far to trust it. */
@@ -1027,7 +1032,7 @@ tr.unlogged td:first-child {
   gap: 12px;
   padding: 11px 13px;
   border-radius: var(--radius-sm);
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   font-weight: 600;
   margin-bottom: 12px;
 }
@@ -1043,14 +1048,14 @@ tr.unlogged td:first-child {
 }
 
 .coverage-n {
-  font-size: 20px;
+  font-size: calc(20px * var(--font-scale));
   font-variant-numeric: tabular-nums;
 }
 
 .notice {
   padding: 11px 13px;
   border-radius: var(--radius-sm);
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--font-scale));
   background: color-mix(in srgb, var(--warn) 14%, transparent);
   color: var(--warn);
   margin-bottom: 12px;
@@ -1086,13 +1091,13 @@ tr.unlogged td:first-child {
   padding: calc(10px + var(--safe-top)) 14px 10px;
   background: var(--warn);
   color: #201700;
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--font-scale));
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 .update-banner .sub {
   color: #4a3800;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
 }
 
 .update-banner .btn {
@@ -1112,7 +1117,7 @@ tr.unlogged td:first-child {
   gap: 4px;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1125,6 +1130,31 @@ tr.unlogged td:first-child {
   color: var(--warn);
 }
 
+/* At larger text sizes a name beside two buttons truncated to "as…", so the
+   name takes the whole first line and the buttons sit under it, right-aligned. */
+.food-row {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.food-row .row-main {
+  flex-basis: 100%;
+}
+
+.food-row .row-title,
+.food-row .row-sub {
+  white-space: normal;
+}
+
+.food-row .est-toggle {
+  margin-left: auto;
+}
+
+/* Meal lines wrap a long name rather than cutting it beside the stepper. */
+.meal-line .row-title {
+  white-space: normal;
+}
+
 /* The per-food estimate tick on the Foods page. */
 .est-toggle {
   display: inline-flex;
@@ -1135,7 +1165,7 @@ tr.unlogged td:first-child {
   padding: 0 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale));
   font-weight: 600;
   color: var(--text-dim);
 }
@@ -1179,7 +1209,7 @@ tr.unlogged td:first-child {
   flex: 1;
   text-align: center;
   font-weight: 700;
-  font-size: 15px;
+  font-size: calc(15px * var(--font-scale));
 }
 
 .spinner {
@@ -1214,7 +1244,7 @@ tr.unlogged td:first-child {
 .auth-title {
   text-align: center;
   margin-bottom: 4px;
-  font-size: 26px;
+  font-size: calc(26px * var(--font-scale));
   font-weight: 800;
   letter-spacing: -0.02em;
 }
@@ -1222,7 +1252,7 @@ tr.unlogged td:first-child {
 .auth-sub {
   text-align: center;
   color: var(--text-faint);
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--font-scale));
   margin-bottom: 22px;
 }
 
