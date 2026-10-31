@@ -580,8 +580,13 @@ and the first model that answers with something readable wins:
 
 | Request | Tried in order |
 |---|---|
-| Photo (label or plate) | NVIDIA vision models → Workers AI |
-| Description | NVIDIA text models → NVIDIA vision models → Workers AI |
+| Photo (label or plate) | nemotron-3.5-super-vl → Llama 4 Scout (Workers AI) → Mistral Small 3.1 (Workers AI) → llama-3.2-90b-vision → two currently withdrawn models |
+| Description | glm-5.3-flash → the photo chain → gemma-4-31b |
+
+The order is by measured speed on a real nutrition label, which every model
+in it read perfectly (7 of 7 figures): 2.2 s, 4.0 s, 4.7 s and 35.7 s
+respectively. That is why the providers are mixed: Cloudflare's two models
+are faster than NVIDIA's own 90B.
 
 Every failure hands over to the next model: withdrawn (404/410, which costs
 milliseconds), no answer within its time slice (60 s streamed, 28 s
@@ -589,10 +594,10 @@ buffered, so one stalled model cannot use up the budget), a server error,
 an empty reply, or a reply that cannot be read. A rejected NVIDIA key skips
 the rest of NVIDIA, since every model there would refuse it too.
 
-**Workers AI is the last resort.** It runs inside Cloudflare through the
-Worker's `AI` binding (`wrangler.jsonc`), needs no key, and so keeps photos
-working when NVIDIA withdraws a model, is down, or rejects the key. Llama 4
-Scout, then Mistral Small 3.1; both take the same image messages as NVIDIA.
+**Workers AI needs no key.** It runs inside Cloudflare through the Worker's
+`AI` binding (`wrangler.jsonc`), so it keeps photos working when NVIDIA
+withdraws a model, is down, or rejects the key. Both models take the same
+image messages as NVIDIA.
 Llama 3.2 Vision is deliberately not used there: on Workers AI it refuses
 every request until a licence prompt is sent.
 
@@ -604,7 +609,10 @@ off the phone.
 **The order comes from probing, not the catalog.** Being listed at
 `https://integrate.api.nvidia.com/v1/models` does not mean a model answers
 for a given key. `GET /api/diag` sends every model in the chains, plus a few
-candidates, a tiny real image and reports what each did. Re-run it when
+candidates, a tiny image and reports what each did. `POST /api/diag` with
+`{ "image": "data:image/jpeg;base64,..." }` has every photo model read a
+real label with the app's own prompt, all at once, and reports time taken
+and what each read, which is what the order should be chosen on. Re-run it when
 something changes, then reorder `worker/models.ts`, or override without a
 code change by setting a comma-separated `NVIDIA_VISION_MODELS` or
 `NVIDIA_TEXT_MODELS` in `wrangler.jsonc`. `GET /api/health` shows the chains

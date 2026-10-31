@@ -10,9 +10,9 @@ import type { Env } from './shared'
  * that answers with something readable wins, and a withdrawn, stalled or
  * failing one costs only the time it takes to fail.
  *
- * The chain ends on Cloudflare Workers AI, which runs inside Cloudflare and
- * needs no NVIDIA key at all. It is the backup for the one failure nothing
- * else covers: NVIDIA itself being down, or the key being revoked.
+ * Cloudflare Workers AI is in the chain too. It runs inside Cloudflare and
+ * needs no NVIDIA key, so it also covers the failure nothing else does:
+ * NVIDIA itself being down, or the key being revoked.
  *
  * The order was set by probing each model with a real image through
  * /api/diag, not by reading NVIDIA's catalog: being listed there does not
@@ -24,34 +24,46 @@ export interface Provider {
   model: string
 }
 
-/** Reads a label or a plate photo. Probed 2026-10-31. */
-export const NVIDIA_VISION_MODELS = [
-  // Answered a real image correctly in 1.4s.
-  'meta/llama-3.2-90b-vision-instruct',
-  'nvidia/nemotron-3.5-super-vl-120b-a12b',
-  'google/gemma-3-12b-it',
-  // The original choice. Answers 404 now; kept last in case it returns, at
-  // a cost of ~25ms when it does not.
-  'meta/llama-3.2-11b-vision-instruct',
-]
+const nv = (model: string): Provider => ({ via: 'nvidia', model })
+const cf = (model: string): Provider => ({ via: 'workers-ai', model })
 
-/** Parses or estimates a written description. Probed 2026-10-31. */
-export const NVIDIA_TEXT_MODELS = [
-  // Answered in 11s.
-  'z-ai/glm-5.3-flash',
-  // The previous choice. Timed out at 20s in the probe.
-  'google/gemma-4-31b-it',
+/**
+ * Reads a label or a plate photo, fastest first. Chosen by POSTing a real
+ * nutrition label to /api/diag on 2026-10-31, which every model below read
+ * perfectly (7 of 7 figures) except the two at the end:
+ *
+ *   nemotron-3.5-super-vl     2.2s
+ *   Llama 4 Scout (Workers)   4.0s
+ *   Mistral Small 3.1 (Wkrs)  4.7s
+ *   llama-3.2-90b-vision     35.7s  (and timed out on an earlier probe)
+ *   gemma-3-12b, 11b-vision   404   kept in case they return; ~30ms each
+ *
+ * Mixing providers is deliberate: the two Workers AI models are faster than
+ * NVIDIA's own 90B, and they need no key.
+ */
+export const PHOTO_CHAIN: Provider[] = [
+  nv('nvidia/nemotron-3.5-super-vl-120b-a12b'),
+  cf('@cf/meta/llama-4-scout-17b-16e-instruct'),
+  cf('@cf/mistralai/mistral-small-3.1-24b-instruct'),
+  nv('meta/llama-3.2-90b-vision-instruct'),
+  nv('google/gemma-3-12b-it'),
+  // The original choice. Answers 404 since late October 2026.
+  nv('meta/llama-3.2-11b-vision-instruct'),
 ]
 
 /**
- * Keyless, inside Cloudflare. Both take the same image_url message parts as
- * NVIDIA's API and handle text too. Llama 3.2 Vision is deliberately absent:
- * on Workers AI it refuses every request until a licence prompt is sent.
+ * Text-only models, tried before the photo chain for a description.
+ * glm-5.3-flash answered in 6.6-11s; gemma-4-31b, the previous choice,
+ * timed out on every probe, so it goes after the photo chain rather than
+ * costing a minute up front.
  */
-export const WORKERS_AI_MODELS = [
-  '@cf/meta/llama-4-scout-17b-16e-instruct',
-  '@cf/mistralai/mistral-small-3.1-24b-instruct',
-]
+export const TEXT_FIRST: Provider[] = [nv('z-ai/glm-5.3-flash')]
+export const TEXT_LAST: Provider[] = [nv('google/gemma-4-31b-it')]
+
+/** The NVIDIA and Workers AI subsets, in chain order. */
+export const NVIDIA_VISION_MODELS = PHOTO_CHAIN.filter((p) => p.via === 'nvidia').map((p) => p.model)
+export const NVIDIA_TEXT_MODELS = [...TEXT_FIRST, ...TEXT_LAST].map((p) => p.model)
+export const WORKERS_AI_MODELS = PHOTO_CHAIN.filter((p) => p.via === 'workers-ai').map((p) => p.model)
 
 /** "a, b , c" -> ["a", "b", "c"], so a chain can be overridden in config. */
 function list(value: string | undefined): string[] | null {
@@ -60,34 +72,41 @@ function list(value: string | undefined): string[] | null {
 }
 
 /**
- * The chain for one request. Text tries the text models first, then the
- * vision models (which read text perfectly well), then Workers AI. Photos
- * skip the text models, which cannot see.
+ * The chain for one request. A description tries the text-only model first,
+ * then the photo chain (vision models read text perfectly well), then the
+ * slow text model. A photo skips the text models, which cannot see.
  *
  * NVIDIA_VISION_MODELS / NVIDIA_TEXT_MODELS in wrangler.jsonc replace the
- * defaults. The older single-model NVIDIA_MODEL / NVIDIA_TEXT_MODEL, if
- * still set, go first rather than being ignored. A provider whose
- * credential is missing is left out.
+ * NVIDIA defaults, with Workers AI then going after them. The older
+ * single-model NVIDIA_MODEL / NVIDIA_TEXT_MODEL, if still set, go first
+ * rather than being ignored. A provider whose credential is missing is left
+ * out entirely.
  */
 export function modelChain(env: Env, kind: 'label' | 'plate' | 'text'): Provider[] {
-  const vision = list(env.NVIDIA_VISION_MODELS) ?? NVIDIA_VISION_MODELS
-  const text = list(env.NVIDIA_TEXT_MODELS) ?? NVIDIA_TEXT_MODELS
+  const visionOverride = list(env.NVIDIA_VISION_MODELS)
+  const textOverride = list(env.NVIDIA_TEXT_MODELS)
+  const workersAi = PHOTO_CHAIN.filter((p) => p.via === 'workers-ai')
 
-  const nvidia =
+  const photo = visionOverride ? [...visionOverride.map(nv), ...workersAi] : PHOTO_CHAIN
+  const legacyVision = env.NVIDIA_MODEL ? [nv(env.NVIDIA_MODEL)] : []
+  const legacyText = env.NVIDIA_TEXT_MODEL ? [nv(env.NVIDIA_TEXT_MODEL)] : []
+
+  const ordered =
     kind === 'text'
-      ? [env.NVIDIA_TEXT_MODEL, ...text, env.NVIDIA_MODEL, ...vision]
-      : [env.NVIDIA_MODEL, ...vision]
+      ? textOverride
+        ? [...legacyText, ...textOverride.map(nv), ...legacyVision, ...photo]
+        : [...legacyText, ...TEXT_FIRST, ...legacyVision, ...photo, ...TEXT_LAST]
+      : [...legacyVision, ...photo]
 
   const chain: Provider[] = []
   const seen = new Set<string>()
-  const add = (via: Provider['via'], model: string | undefined) => {
-    if (!model || seen.has(model)) return
-    seen.add(model)
-    chain.push({ via, model })
+  for (const p of ordered) {
+    if (seen.has(p.model)) continue
+    if (p.via === 'nvidia' && !env.NVIDIA_API_KEY) continue
+    if (p.via === 'workers-ai' && !env.AI) continue
+    seen.add(p.model)
+    chain.push(p)
   }
-
-  if (env.NVIDIA_API_KEY) for (const m of nvidia) add('nvidia', m)
-  if (env.AI) for (const m of WORKERS_AI_MODELS) add('workers-ai', m)
   return chain
 }
 

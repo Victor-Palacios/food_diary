@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { runExtraction } from './extract'
-import { NVIDIA_TEXT_MODELS, NVIDIA_VISION_MODELS, WORKERS_AI_MODELS, extractionConfigured, modelChain } from './models'
+import { NVIDIA_VISION_MODELS, PHOTO_CHAIN, TEXT_FIRST, TEXT_LAST, WORKERS_AI_MODELS, extractionConfigured, modelChain } from './models'
 import type { Env } from './shared'
 
 /**
@@ -68,21 +68,17 @@ const KEY = { NVIDIA_API_KEY: 'k' } as Env
 const FAST = { perModelMs: 300, minAttemptMs: 50 }
 
 describe('which models get tried', () => {
-  it('tries the vision models for a photo, then Workers AI', () => {
+  it('tries the photo chain for a photo, fastest first, across both providers', () => {
     const { AI } = workersAi({})
-    expect(modelChain({ ...KEY, AI } as Env, 'plate').map((p) => p.model)).toEqual([
-      ...NVIDIA_VISION_MODELS,
-      ...WORKERS_AI_MODELS,
-    ])
+    expect(modelChain({ ...KEY, AI } as Env, 'plate')).toEqual(PHOTO_CHAIN)
+    // Measured fastest on a real label; the slow 90B is a later backup.
+    expect(PHOTO_CHAIN[0].model).toBe('nvidia/nemotron-3.5-super-vl-120b-a12b')
+    expect(PHOTO_CHAIN.slice(1, 3).every((p) => p.via === 'workers-ai')).toBe(true)
   })
 
-  it('tries text models, then vision models, then Workers AI for a description', () => {
+  it('tries the text model, then the photo chain, then the slow text model', () => {
     const { AI } = workersAi({})
-    expect(modelChain({ ...KEY, AI } as Env, 'text').map((p) => p.model)).toEqual([
-      ...NVIDIA_TEXT_MODELS,
-      ...NVIDIA_VISION_MODELS,
-      ...WORKERS_AI_MODELS,
-    ])
+    expect(modelChain({ ...KEY, AI } as Env, 'text')).toEqual([...TEXT_FIRST, ...PHOTO_CHAIN, ...TEXT_LAST])
   })
 
   it('no longer starts with the withdrawn 11B vision model', () => {
@@ -95,9 +91,10 @@ describe('which models get tried', () => {
     expect(chain.filter((p) => p.model === 'some/pinned-model')).toHaveLength(1)
   })
 
-  it('takes a comma-separated override from config', () => {
-    const chain = modelChain({ ...KEY, NVIDIA_VISION_MODELS: ' a/one , b/two ' } as Env, 'plate')
-    expect(chain.map((p) => p.model)).toEqual(['a/one', 'b/two'])
+  it('takes a comma-separated override from config, keeping Workers AI after it', () => {
+    const { AI } = workersAi({})
+    const chain = modelChain({ ...KEY, AI, NVIDIA_VISION_MODELS: ' a/one , b/two ' } as Env, 'plate')
+    expect(chain.map((p) => p.model)).toEqual(['a/one', 'b/two', ...WORKERS_AI_MODELS])
   })
 
   it('leaves out providers with no credential, and works with Workers AI alone', () => {
@@ -177,8 +174,8 @@ describe('falling through the chain', () => {
     expect(out.ok).toBe(false)
     if (out.ok) return
     expect(out.error).toMatch(/No model could read that photo/)
-    expect(out.error).toContain('llama-3.2-90b-vision-instruct (no answer in')
-    expect(out.error).toContain('nemotron-3.5-super-vl-120b-a12b (HTTP 503)')
+    expect(out.error).toContain('nemotron-3.5-super-vl-120b-a12b (no answer in')
+    expect(out.error).toContain('llama-3.2-90b-vision-instruct (HTTP 503)')
     expect(out.error).toContain('withdrawn, 404')
     expect(out.error).toContain('llama-4-scout-17b-16e-instruct (error)')
   })
