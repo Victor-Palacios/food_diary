@@ -80,7 +80,7 @@ const MIN_ATTEMPT_MS = 8_000
  */
 const HEDGE_SCHEDULE_MS = [15_000, 35_000]
 
-const LABEL_PROMPT = `You are reading a printed nutrition facts panel from a photograph.
+export const LABEL_PROMPT = `You are reading a printed nutrition facts panel from a photograph.
 
 Extract the values for ONE SERVING as printed on the label. If the label shows
 both "per serving" and "per container" columns, use the PER SERVING column.
@@ -605,7 +605,7 @@ function shortName(model: string): string {
  * Workers AI, through the Worker's own binding: no key, no network hop out of
  * Cloudflare. Takes the same messages as NVIDIA's API.
  */
-async function callWorkersAi(
+export async function callWorkersAi(
   env: Env,
   model: string,
   messageContent: Array<Record<string, unknown>>,
@@ -719,7 +719,7 @@ interface CallResult {
   failure?: { error: string; detail?: string }
 }
 
-async function callModel(
+export async function callModel(
   env: Env,
   baseUrl: string,
   model: string,

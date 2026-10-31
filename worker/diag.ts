@@ -1,5 +1,6 @@
 import { json, type Env } from './shared'
 import { NVIDIA_VISION_MODELS, WORKERS_AI_MODELS, modelChain } from './models'
+import { LABEL_PROMPT, callModel, callWorkersAi, parseJsonObject, parseLooseReply } from './extract'
 
 /**
  * Probes candidate models so a broken one can be identified in a single
@@ -26,8 +27,9 @@ const TEST_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAA
 
 const PER_MODEL_TIMEOUT_MS = 20_000
 
-export async function handleDiag(env: Env): Promise<Response> {
+export async function handleDiag(request: Request, env: Env): Promise<Response> {
   if (!env.NVIDIA_API_KEY && !env.AI) return json({ error: 'No model provider configured.' }, 501)
+  if (request.method === 'POST') return probeWithLabel(request, env)
 
   const baseUrl = env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1'
   const nvidia = (kind: 'plate' | 'text', extra: string[]) => [
@@ -132,3 +134,49 @@ async function probe(
 
   return results
 }
+
+/**
+ * POST a real label photo ({ "image": "data:image/jpeg;base64,..." }) and
+ * every model in the photo chain reads it with the app's own label prompt,
+ * all at once. Reports how long each took and what it read, which is what
+ * the chain order should be chosen on: speed alone says nothing about
+ * whether a model reads 7 g as 7.
+ */
+async function probeWithLabel(request: Request, env: Env): Promise<Response> {
+  let image = ''
+  try {
+    image = String(((await request.json()) as { image?: unknown }).image ?? '')
+  } catch {
+    // Falls through to the check below.
+  }
+  if (!image.startsWith('data:image/') || image.length > 200_000) {
+    return json({ error: 'POST { "image": "data:image/...;base64,..." } under 200 KB.' }, 400)
+  }
+
+  const baseUrl = env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1'
+  const content = [
+    { type: 'text', text: LABEL_PROMPT },
+    { type: 'image_url', image_url: { url: image } },
+  ]
+  const results = await Promise.all(
+    modelChain(env, 'label').map(async (p) => {
+      const startedAt = Date.now()
+      const r =
+        p.via === 'nvidia'
+          ? await callModel(env, baseUrl, p.model, content, Date.now() + LABEL_TIMEOUT_MS, 'diag')
+          : await callWorkersAi(env, p.model, content, LABEL_TIMEOUT_MS, 'diag')
+      const parsed = r.content ? (parseJsonObject(r.content) ?? parseLooseReply(r.content)) : null
+      return {
+        model: p.model,
+        ms: Date.now() - startedAt,
+        outcome: parsed ? 'read' : (r.reason ?? 'unreadable reply'),
+        name: parsed?.name,
+        nutrition: parsed?.nutrition,
+      }
+    }),
+  )
+  return json({ results })
+}
+
+/** Under the edge's ~100s limit, since this reply is not streamed. */
+const LABEL_TIMEOUT_MS = 80_000

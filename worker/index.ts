@@ -22,7 +22,7 @@ export default {
 
     // Diagnostic: which models actually answer for this key. See diag.ts.
     if (url.pathname === '/api/diag') {
-      return withSecurityHeaders(await handleDiag(env))
+      return withSecurityHeaders(await handleDiag(request, env))
     }
 
     if (url.pathname === '/api/health') {
