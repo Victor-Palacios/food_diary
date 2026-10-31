@@ -1,4 +1,5 @@
 import { json, type Env } from './shared'
+import { extractionConfigured, modelChain } from './models'
 
 /**
  * Phase 2 -- nutrition extraction via the NVIDIA API.
@@ -32,26 +33,12 @@ const MAX_IMAGE_B64_BYTES = 180_000
 const MAX_TEXT_CHARS = 600
 
 /**
- * Both ids were chosen by probing the API with this key (GET /api/diag), not
- * by reading the catalog. Presence in the public /v1/models list is NOT
- * availability: several plausible ids return 404, and the 90B vision model
- * -- the obvious choice, and the one configured first -- never responds at
- * all. The 11B vision model answers a real image in under 400ms.
- *
- * Both are overridable by the vars of the same name in wrangler.jsonc, so
- * swapping a model is a config change, not a code change. Re-run /api/diag
- * if either starts failing.
+ * How long one model in the chain may take before the next is tried. A
+ * stalled model must not eat the whole budget: the point of the chain is
+ * that the next one gets a turn. The last model left gets whatever remains.
  */
-const DEFAULT_VISION_MODEL = 'meta/llama-3.2-11b-vision-instruct'
-
-/**
- * Chosen by probing the API (/api/diag), not by reading the catalog.
- *
- * Being listed in /v1/models does not mean a model is callable with a given
- * key: two plausible Nemotron ids return 404, and the 90B vision model does
- * not respond at all. This one answers in roughly 350ms.
- */
-const DEFAULT_TEXT_MODEL = 'google/gemma-4-31b-it'
+const PER_MODEL_MS = 60_000
+const PER_MODEL_BUFFERED_MS = 28_000
 
 /**
  * Total wall-clock budget for the upstream work, shared across a retry.
@@ -216,7 +203,7 @@ export async function handleExtract(
 
   // 501 is the signal the client uses to hide the photo buttons entirely.
   // Phase 2 is optional by design; an unconfigured deployment is a valid one.
-  if (!env.NVIDIA_API_KEY) {
+  if (!extractionConfigured(env)) {
     return json(
       { error: 'Photo extraction is not configured on this deployment.' },
       501,
@@ -290,13 +277,6 @@ export async function handleExtract(
           { type: 'image_url', image_url: { url: image } },
         ]
 
-  const baseUrl = env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1'
-  const visionModel = env.NVIDIA_MODEL || DEFAULT_VISION_MODEL
-
-  // A text description does not need a vision model. Routing it to a
-  // text-only model is cheaper and follows the transcribe-vs-estimate
-  // instructions more reliably than the vision variant does.
-  const model = kind === 'text' ? env.NVIDIA_TEXT_MODEL || DEFAULT_TEXT_MODEL : visionModel
 
   // Everything above this point fails fast and gets an ordinary status code.
   // From here the model call can take minutes, so the reply is streamed --
@@ -312,7 +292,7 @@ export async function handleExtract(
   }
 
   const work = (budgetMs: number) =>
-    runExtraction(env, baseUrl, model, visionModel, messageContent, kind, budgetMs).then(
+    runExtraction(env, messageContent, kind, budgetMs).then(
       (final) =>
         kind === 'text' && final.ok
           ? { ...final, result: applyStatedValues(final.result, description) }
@@ -521,63 +501,151 @@ type Final =
   | { ok: true; result: Record<string, unknown> }
   | { ok: false; error: string; detail?: string }
 
-async function runExtraction(
+export interface ChainOptions {
+  /** Time one model may take before the next is tried. */
+  perModelMs?: number
+  /** Below this much time left, starting another model is pointless. */
+  minAttemptMs?: number
+}
+
+/**
+ * Walks the model chain until one answers with something readable.
+ *
+ * Every kind of failure moves on to the next model: withdrawn (404/410,
+ * which costs milliseconds), stalled past its time slice, a server error,
+ * an empty reply, or a reply that could not be read. A rejected NVIDIA key
+ * skips the rest of NVIDIA, since every model there would refuse it too,
+ * and goes straight to Workers AI.
+ *
+ * If nothing works, the error names every model tried and why it failed,
+ * so the cause can be read off the phone instead of out of the logs.
+ */
+export async function runExtraction(
   env: Env,
-  baseUrl: string,
-  model: string,
-  visionModel: string,
   messageContent: Array<Record<string, unknown>>,
-  kind: string,
+  kind: 'label' | 'plate' | 'text',
   budgetMs: number,
+  options: ChainOptions = {},
 ): Promise<Final> {
-  // One shared deadline rather than a per-call timeout, so a fast failure
-  // followed by a retry cannot add up to more than the whole budget.
+  const chain = modelChain(env, kind)
   const deadline = Date.now() + budgetMs
+  const perModel =
+    options.perModelMs ?? (budgetMs <= BUFFERED_BUDGET_MS ? PER_MODEL_BUFFERED_MS : PER_MODEL_MS)
+  const minAttempt = options.minAttemptMs ?? MIN_ATTEMPT_MS
+  const baseUrl = env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1'
 
-  let result = await callModel(env, baseUrl, model, messageContent, deadline, kind)
+  const tried: string[] = []
+  let unreadable: string | null = null
+  let nvidiaKeyRejected = false
 
-  // NVIDIA retires hosted models, and a retired id answers 404/410 forever.
-  // Rather than leave the feature dead until someone notices, fall back to
-  // the vision model, which handles plain text perfectly well. Costs a little
-  // more per call; beats being broken.
-  if (
-    result.retired &&
-    kind === 'text' &&
-    model !== visionModel &&
-    deadline - Date.now() > MIN_ATTEMPT_MS
-  ) {
-    console.error(
-      `NVIDIA_TEXT_MODEL "${model}" is retired (${result.status}); ` +
-        `falling back to "${visionModel}". Update the var to silence this.`,
-    )
-    result = await callModel(env, baseUrl, visionModel, messageContent, deadline, kind)
-  }
+  for (let i = 0; i < chain.length; i++) {
+    const provider = chain[i]
+    if (provider.via === 'nvidia' && nvidiaKeyRejected) continue
 
-  if (result.failure) return { ok: false, ...result.failure }
-
-  const parsed =
-    parseJsonObject(result.content ?? '') ?? parseLooseReply(result.content ?? '')
-  if (!parsed) {
-    // Log the whole reply: when this fires, the reply is the only evidence
-    // of why, and guessing at it costs far more than the log line.
-    console.error(
-      `Unparseable ${kind} reply from ${model} ` +
-        `(${result.content?.length ?? 0} chars): ${(result.content ?? '').slice(0, 1500)}`,
-    )
-    return {
-      ok: false,
-      error:
-        kind === 'text'
-          ? 'Could not read a result from that description. Enter it by hand.'
-          : 'Could not read a result from that photo. Enter it by hand.',
-      // Echoed back so a failure can be diagnosed from the phone rather
-      // than by digging through Worker logs. It is the user's own content
-      // coming back, so nothing is disclosed that they did not send.
-      detail: (result.content ?? '').slice(0, 300),
+    const remaining = deadline - Date.now()
+    if (remaining < minAttempt) {
+      tried.push(`${shortName(provider.model)} (no time left)`)
+      break
     }
+    const isLast = chain
+      .slice(i + 1)
+      .every((p) => p.via === 'nvidia' && nvidiaKeyRejected)
+    const slice = isLast ? remaining : Math.min(remaining, perModel)
+
+    const result =
+      provider.via === 'nvidia'
+        ? await callModel(env, baseUrl, provider.model, messageContent, Date.now() + slice, kind)
+        : await callWorkersAi(env, provider.model, messageContent, slice, kind)
+
+    if (result.failure || !result.content) {
+      tried.push(`${shortName(provider.model)} (${result.reason ?? 'failed'})`)
+      if (result.keyRejected) nvidiaKeyRejected = true
+      continue
+    }
+
+    const parsed = parseJsonObject(result.content) ?? parseLooseReply(result.content)
+    if (!parsed) {
+      // Log the whole reply: when this fires, the reply is the only
+      // evidence of why, and guessing at it costs far more than the line.
+      console.error(
+        `Unparseable ${kind} reply from ${provider.model} ` +
+          `(${result.content.length} chars): ${result.content.slice(0, 1500)}`,
+      )
+      tried.push(`${shortName(provider.model)} (unreadable reply)`)
+      unreadable = result.content
+      continue
+    }
+
+    if (tried.length) {
+      console.log(`${kind} answered by ${provider.model} after: ${tried.join(', ')}`)
+    }
+    return { ok: true, result: parsed }
   }
 
-  return { ok: true, result: parsed }
+  console.error(`No model could answer a ${kind} request. Tried: ${tried.join(', ') || 'none'}`)
+  const what = kind === 'text' ? 'that description' : 'that photo'
+  return {
+    ok: false,
+    error:
+      `No model could read ${what} right now. Try again in a minute, or enter it by hand.` +
+      (tried.length ? `\n\nTried: ${tried.join(', ')}.` : ''),
+    // Echoed back so a failure can be diagnosed from the phone rather than
+    // by digging through Worker logs. It is the user's own content coming
+    // back, so nothing is disclosed that they did not send.
+    ...(unreadable ? { detail: unreadable.slice(0, 300) } : {}),
+  }
+}
+
+/** "meta/llama-3.2-90b-vision-instruct" -> "llama-3.2-90b-vision-instruct". */
+function shortName(model: string): string {
+  return model.replace(/^@cf\//, '').split('/').pop() ?? model
+}
+
+/**
+ * Workers AI, through the Worker's own binding: no key, no network hop out of
+ * Cloudflare. Takes the same messages as NVIDIA's API.
+ */
+async function callWorkersAi(
+  env: Env,
+  model: string,
+  messageContent: Array<Record<string, unknown>>,
+  timeoutMs: number,
+  kind: string,
+): Promise<CallResult> {
+  const startedAt = Date.now()
+  // The binding's run() is typed per model id; the chain holds plain strings.
+  const ai = env.AI as unknown as { run(model: string, input: unknown): Promise<unknown> }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const out = (await Promise.race([
+      ai.run(model, {
+        messages: [{ role: 'user', content: messageContent }],
+        max_tokens: 1500,
+        temperature: 0.1,
+      }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('TimeoutError')), timeoutMs)
+      }),
+    ])) as { response?: unknown } | null
+
+    console.log(`Workers AI ${kind} via ${model}: ok in ${Date.now() - startedAt}ms`)
+    const response = out?.response
+    const content =
+      typeof response === 'string' ? response : response ? JSON.stringify(response) : ''
+    if (!content.trim()) {
+      return { reason: 'empty reply', failure: { error: 'Workers AI returned nothing usable.' } }
+    }
+    return { content }
+  } catch (e) {
+    const timedOut = errorText(e) === 'TimeoutError'
+    console.error(`Workers AI ${kind} via ${model} failed after ${Date.now() - startedAt}ms: ${errorText(e)}`)
+    return {
+      reason: timedOut ? `no answer in ${Math.round((Date.now() - startedAt) / 1000)}s` : 'error',
+      failure: { error: `Workers AI failed: ${errorText(e)}` },
+    }
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 /**
@@ -644,6 +712,10 @@ interface CallResult {
   /** Set when the model id itself is gone, so the caller can try another. */
   retired?: boolean
   status?: number
+  /** A few words on why this model failed, for the "Tried:" list. */
+  reason?: string
+  /** The key itself was refused, so no other NVIDIA model will do better. */
+  keyRejected?: boolean
   failure?: { error: string; detail?: string }
 }
 
@@ -656,7 +728,10 @@ async function callModel(
   kind: string,
 ): Promise<CallResult> {
   const startedAt = Date.now()
-  const timeoutMs = Math.max(MIN_ATTEMPT_MS, deadline - startedAt)
+  // Exactly the slice the chain gave it. A floor here used to stretch a
+  // model's turn past the slice, and past the whole budget for the last one;
+  // the chain already refuses to start a model with too little time left.
+  const timeoutMs = Math.max(0, deadline - startedAt)
 
   const requestBody = JSON.stringify({
     model,
@@ -696,6 +771,7 @@ async function callModel(
 
     if (timedOut) {
       return {
+        reason: `no answer in ${Math.round(elapsed / 1000)}s`,
         failure: {
           // Name the model: if this keeps happening it is a model choice
           // problem, not a transient one, and the var is one edit away.
@@ -706,6 +782,7 @@ async function callModel(
       }
     }
     return {
+      reason: 'unreachable',
       failure: { error: `Could not reach the extraction service: ${errorText(e)}` },
     }
   }
@@ -724,6 +801,7 @@ async function callModel(
       return {
         retired: true,
         status: upstream.status,
+        reason: `withdrawn, ${upstream.status}`,
         failure: {
           error:
             `The model "${model}" is no longer available (${upstream.status}). ` +
@@ -735,6 +813,8 @@ async function callModel(
 
     if (upstream.status === 401 || upstream.status === 403) {
       return {
+        reason: 'key rejected',
+        keyRejected: true,
         failure: {
           error: 'The NVIDIA API key was rejected. Check or rotate NVIDIA_API_KEY.',
         },
@@ -742,6 +822,7 @@ async function callModel(
     }
 
     return {
+      reason: `HTTP ${upstream.status}`,
       failure: { error: `The extraction service returned ${upstream.status}.` },
     }
   }
@@ -753,6 +834,7 @@ async function callModel(
   const content = payload?.choices?.[0]?.message?.content
   if (typeof content !== 'string' || !content.trim()) {
     return {
+      reason: 'empty reply',
       failure: { error: 'The extraction service returned nothing usable.' },
     }
   }

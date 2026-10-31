@@ -3,10 +3,15 @@ export interface Env {
   /** Secret binding. Set with `wrangler secret put NVIDIA_API_KEY`. */
   NVIDIA_API_KEY?: string
   NVIDIA_BASE_URL?: string
-  /** Vision model, for reading a label or a plate photo. */
+  /** Comma-separated vision chain, replacing the defaults in models.ts. */
+  NVIDIA_VISION_MODELS?: string
+  /** Comma-separated text chain, replacing the defaults in models.ts. */
+  NVIDIA_TEXT_MODELS?: string
+  /** Older single-model settings. Still honoured, tried first, if set. */
   NVIDIA_MODEL?: string
-  /** Text-only model, for parsing or estimating a written description. */
   NVIDIA_TEXT_MODEL?: string
+  /** Workers AI: the keyless last resort at the end of every chain. */
+  AI?: Ai
 }
 
 export function json(body: unknown, status = 200): Response {

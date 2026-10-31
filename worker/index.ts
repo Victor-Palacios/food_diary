@@ -1,6 +1,7 @@
 import { handleExtract } from './extract'
 import { handleDiag } from './diag'
 import { json, type Env } from './shared'
+import { extractionConfigured, modelChain } from './models'
 
 export type { Env }
 
@@ -29,10 +30,11 @@ export default {
         ok: true,
         // Lets the client hide the photo buttons when Phase 2 is not wired up,
         // rather than offering an action that always fails.
-        extraction: Boolean(env.NVIDIA_API_KEY),
-        // Named here so a wrong model is visible without reading logs.
-        textModel: env.NVIDIA_TEXT_MODEL ?? '(default)',
-        visionModel: env.NVIDIA_MODEL ?? '(default)',
+        extraction: extractionConfigured(env),
+        // The chains, in order, so the fallback order is visible without
+        // reading logs.
+        photoModels: modelChain(env, 'plate').map((p) => p.model),
+        textModels: modelChain(env, 'text').map((p) => p.model),
       })
     }
 

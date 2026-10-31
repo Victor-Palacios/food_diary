@@ -21,27 +21,24 @@
     "enabled": true
   },
 
+  // Workers AI: the keyless last resort at the end of every model chain
+  // (worker/models.ts). Runs inside Cloudflare, so it keeps photos working
+  // when NVIDIA withdraws a model, is down, or rejects the key.
+  "ai": {
+    "binding": "AI"
+  },
+
   // Non-secret Worker config. The NVIDIA API key is NOT here -- it is a secret
   // binding set with `wrangler secret put NVIDIA_API_KEY` (see README).
+  //
+  // Which models to try, and in what order, lives in worker/models.ts, chosen
+  // by probing /api/diag rather than by reading NVIDIA's catalog. To change
+  // the order without a code change, set a comma-separated list here:
+  //   "NVIDIA_VISION_MODELS": "meta/llama-3.2-90b-vision-instruct, ..."
+  //   "NVIDIA_TEXT_MODELS": "z-ai/glm-5.3-flash, ..."
+  // A single pinned model used to live here and went dead when NVIDIA
+  // withdrew it; that is exactly what the chain is for.
   "vars": {
-    "NVIDIA_BASE_URL": "https://integrate.api.nvidia.com/v1",
-    // Vision model: reads a nutrition label or a plate photo.
-    // The 90B variant is listed but never responds for this key; the 11B
-    // reads a real image in under 400ms. Chosen by probing (/api/diag).
-    "NVIDIA_MODEL": "meta/llama-3.2-11b-vision-instruct",
-    // Text-only model: parses or estimates a written description. Cheaper
-    // than the vision model and better at following the transcribe-vs-
-    // estimate rules, which is the part that has to be right.
-    //
-    // NVIDIA withdraws hosted models; a withdrawn id answers 410 forever.
-    // The live catalog is public and needs no key:
-    //   curl https://integrate.api.nvidia.com/v1/models
-    // If this one goes, the Worker falls back to the vision model and logs
-    // the swap, so the feature keeps working until this line is updated.
-    //
-    // Chosen by probing (/api/diag), not from the catalog listing: this one
-    // actually answers for this key, in ~350ms. Several plausible ids --
-    // including two Nemotron models -- are listed but return 404.
-    "NVIDIA_TEXT_MODEL": "google/gemma-4-31b-it"
+    "NVIDIA_BASE_URL": "https://integrate.api.nvidia.com/v1"
   }
 }

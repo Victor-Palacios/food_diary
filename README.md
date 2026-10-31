@@ -566,27 +566,49 @@ Three separate features, not one "upload a picture" flow:
   `source = 'photo'` is reserved for results that actually came from a camera,
   so provenance stays honest.
 
-Text requests are routed to `NVIDIA_TEXT_MODEL` rather than the vision model —
-cheaper, and better at following the transcribe-versus-estimate rule, which is
-the part that has to be right. Both model ids are non-secret `vars` in
-`wrangler.jsonc` and can be changed without a code change.
+Text requests try text-only models first: cheaper, and better at following
+the transcribe-versus-estimate rule, which is the part that has to be right.
+Which models, and in what order, is the next section.
 
-### When a model is withdrawn
+### When a model is withdrawn: the model chain
 
-NVIDIA retires hosted models, and a retired id answers **410 Gone** forever.
-The live catalog is public and needs no key:
+NVIDIA withdraws hosted models without notice. The 11B vision model this app
+was built on started answering **404** one day, and photo logging stopped
+working with it, because it was the only model configured. So no request
+depends on one model any more. Each walks a **chain** (`worker/models.ts`)
+and the first model that answers with something readable wins:
 
-```sh
-curl https://integrate.api.nvidia.com/v1/models
-```
+| Request | Tried in order |
+|---|---|
+| Photo (label or plate) | NVIDIA vision models → Workers AI |
+| Description | NVIDIA text models → NVIDIA vision models → Workers AI |
 
-Two things keep that from breaking the feature:
+Every failure hands over to the next model: withdrawn (404/410, which costs
+milliseconds), no answer within its time slice (60 s streamed, 28 s
+buffered, so one stalled model cannot use up the budget), a server error,
+an empty reply, or a reply that cannot be read. A rejected NVIDIA key skips
+the rest of NVIDIA, since every model there would refuse it too.
 
-- On a 404/410 for the text model, the Worker **falls back to the vision
-  model**, which handles plain text fine. Slightly dearer per call, but the
-  feature keeps working. The swap is logged.
-- If nothing works, the error names the dead model and the variable to
-  change, rather than saying "try again".
+**Workers AI is the last resort.** It runs inside Cloudflare through the
+Worker's `AI` binding (`wrangler.jsonc`), needs no key, and so keeps photos
+working when NVIDIA withdraws a model, is down, or rejects the key. Llama 4
+Scout, then Mistral Small 3.1; both take the same image messages as NVIDIA.
+Llama 3.2 Vision is deliberately not used there: on Workers AI it refuses
+every request until a licence prompt is sent.
+
+If every model fails, the error lists each one and why, for example
+*"Tried: llama-3.2-90b-vision-instruct (no answer in 60s), …
+llama-3.2-11b-vision-instruct (withdrawn, 404)"*, so the cause can be read
+off the phone.
+
+**The order comes from probing, not the catalog.** Being listed at
+`https://integrate.api.nvidia.com/v1/models` does not mean a model answers
+for a given key. `GET /api/diag` sends every model in the chains, plus a few
+candidates, a tiny real image and reports what each did. Re-run it when
+something changes, then reorder `worker/models.ts`, or override without a
+code change by setting a comma-separated `NVIDIA_VISION_MODELS` or
+`NVIDIA_TEXT_MODELS` in `wrangler.jsonc`. `GET /api/health` shows the chains
+currently in effect.
 
 ### Timeouts, and why the reply is streamed
 
